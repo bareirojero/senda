@@ -1013,6 +1013,8 @@ canvas#neural-canvas:active { cursor: grabbing; }
 .header-brand, .btn-mobile-menu, .drawer-backdrop { display: none; }
 .header-right { display: flex; align-items: center; gap: 8px; }
 
+.composer-brand { display: none; }
+
 /* ───────────── Móvil / Android ───────────── */
 @media (max-width: 720px) {
   body { padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
@@ -1057,11 +1059,61 @@ canvas#neural-canvas:active { cursor: grabbing; }
     flex-shrink: 0;
   }
 
-  .content-column { padding: 14px 14px 0; }
-  .composer-card { padding: 12px 14px 10px; border-radius: 14px; }
-  textarea#note-input { font-size: 16px; min-height: 48px; }
+  /* Logo fuera del header: va abajo, junto a la caja de escritura */
+  .header-brand { display: none; }
+
+  .content-column { padding: 12px 14px 0; }
+
+  /* Feed arriba, caja de escritura abajo (estilo mensajería) */
+  .notes-feed { order: 1; padding-bottom: 12px; }
+  .composer-wrapper {
+    order: 2;
+    display: flex;
+    align-items: flex-end;
+    gap: 10px;
+    margin: 0 -14px;
+    padding: 8px 14px calc(10px + env(safe-area-inset-bottom));
+    background: var(--bg-app);
+    border-top: 1px solid var(--border);
+  }
+
+  .composer-brand {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 44px;
+    flex-shrink: 0;
+    color: var(--text-main);
+    cursor: pointer;
+  }
+
+  .composer-card {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;
+    padding: 6px 6px 6px 14px;
+    border-radius: 22px;
+    box-shadow: none;
+  }
+
+  textarea#note-input {
+    font-size: 16px;
+    min-height: 32px;
+    max-height: 140px;
+    padding: 5px 0;
+    line-height: 1.4;
+  }
+
+  .composer-bottom { margin-top: 0; flex-shrink: 0; }
+  .composer-card .btn-send { border-radius: 16px; padding: 8px 14px; white-space: nowrap; }
+
+  /* El menú / se abre hacia arriba */
+  .slash-menu { top: auto; bottom: calc(100% + 6px); left: 14px; right: 14px; width: auto; }
   .btn-send { padding: 8px 16px; font-size: 13px; }
-  .slash-menu { width: 100%; max-height: 50vh; }
+  .slash-menu { max-height: 50vh; }
   .slash-option { padding: 9px 10px; }
 
   .note-card { padding: 12px 14px; }

@@ -283,6 +283,7 @@ async function submitInput(): Promise<void> {
   const raw = el.input.value.trim();
   if (!raw) return;
   el.input.value = '';
+  autosize();
   slashMenu.close();
 
   if (raw === '/eliminar') {
@@ -483,6 +484,13 @@ el.notionSectionBtn.addEventListener('click', () => setNotionSection(el.topics.c
 setNotionSection(!!getItem(KEYS.notionSectionOpen));
 
 /* ───────────── Eventos ───────────── */
+
+// La caja crece con el texto (hasta su max-height) y vuelve a su tamaño al enviar
+function autosize(): void {
+  el.input.style.height = 'auto';
+  el.input.style.height = `${el.input.scrollHeight}px`;
+}
+el.input.addEventListener('input', autosize);
 
 el.input.addEventListener('keydown', (e) => {
   if (slashMenu.handleKey(e)) return;
