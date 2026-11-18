@@ -70,7 +70,8 @@ interface DateHit {
 
 /** Busca fecha y hora en el texto y devuelve el texto sin esas expresiones. */
 export function parseSpanishDate(text: string, now: Date): DateHit {
-  let rest = ` ${text} `;
+  // Espacios dobles o raros (autocorrector, dictado) rompían "para  mañana"
+  let rest = ` ${text.replace(/\s+/g, ' ')} `;
   let day: Date | undefined;
   let time: { h: number; m: number } | undefined;
   let afternoon = false;
@@ -171,7 +172,7 @@ function hasWords(haystack: string, needle: string): boolean {
 function cleanTitle(s: string): string {
   const t = s
     .replace(/\s+([,.;:])/g, '$1')
-    .replace(/^[\s,.;:–-]+|[\s,;:–-]+$/g, '')
+    .replace(/^[\s,.;:–-]+|[\s,.;:–-]+$/g, '')
     .replace(/\s+/g, ' ')
     .trim();
   return t ? t[0]!.toUpperCase() + t.slice(1) : t;

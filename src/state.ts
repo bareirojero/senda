@@ -12,7 +12,9 @@ export const state = {
   topics: structuredClone(defaultTopics) as Record<string, TopicMeta>,
   activeView: 'stream' as View,
   activeTopic: null as string | null,
-  searchText: ''
+  searchText: '',
+  /** Nota que se está editando en su tarjeta */
+  editingId: null as number | null
 };
 
 // Respuestas que quedaron a medias si se cerró la app mientras la IA contestaba

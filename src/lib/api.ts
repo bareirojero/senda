@@ -77,6 +77,24 @@ export async function deleteBlocks(ids: string[]): Promise<boolean> {
   }
 }
 
+/** Edita una fila (propiedades) o un bloque (contenido) ya creado en Notion. */
+export async function updateInNotion(
+  id: string,
+  change: { properties: Record<string, unknown> } | { block: { type: string; payload: Record<string, unknown> } }
+): Promise<boolean> {
+  try {
+    const res = await fetch('/api/notion-sync', {
+      method: 'PATCH',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json', ...notionHeaders() },
+      body: JSON.stringify({ blockId: id, ...change })
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 /** Marca o desmarca una casilla de tarea en Notion. */
 export async function setTodoChecked(blockId: string, checked: boolean, property?: string): Promise<boolean> {
   try {

@@ -151,3 +151,13 @@ describe('conectores antes de la fecha', () => {
     expect(extractRow(text, misTareas, NOW).title).toBe(title);
   });
 });
+
+describe('espacios y puntuación del dictado o el autocorrector', () => {
+  it.each([
+    ['preparar la certificación de ritter para  mañana #trabajo', 'Preparar la certificación de ritter'],
+    ['preparar la certificación de ritter para mañana', 'Preparar la certificación de ritter'],
+    ['preparar la certificación de ritter para mañana.', 'Preparar la certificación de ritter']
+  ])('%j → %s', (text, title) => {
+    expect(extractRow(text, misTareas, NOW).title).toBe(title);
+  });
+});

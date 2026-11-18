@@ -73,6 +73,19 @@ function statusHtml(note: Note): string {
   return `<div class="note-status s-${note.status}">${STATUS_TEXT[note.status]}${dest}</div>`;
 }
 
+function editorHtml(note: Note): string {
+  const value = note.blockType === 'code' ? note.code || '' : note.text;
+  const hint = note.notionDoneProp ? 'Puedes sumar #etiquetas o una fecha: se actualizan en Notion' : '';
+  return `<div class="note-editor">
+      <textarea class="note-edit" data-edit-input="${note.id}" rows="2">${escapeHtml(value)}</textarea>
+      ${hint ? `<div class="note-editor-hint">${hint}</div>` : ''}
+      <div class="note-editor-bar">
+        <button class="pill-action" data-edit-cancel="${note.id}">Cancelar</button>
+        <button class="btn-send" data-edit-save="${note.id}">Guardar</button>
+      </div>
+    </div>`;
+}
+
 function cardHtml(note: Note): string {
   const meta = topicMeta(note.topic);
   const badge = note.kind === 'question'
@@ -101,19 +114,36 @@ function cardHtml(note: Note): string {
       <div class="note-badges">${badge}</div>
       <div class="note-meta">
         <span class="badge-time">${escapeHtml(timeLabel(note))}</span>
+        ${note.isAI || note.blockType === 'divider' ? '' : `<button class="note-edit-btn" data-edit-id="${note.id}" title="Editar" aria-label="Editar">
+          <svg class="nav-svg" viewBox="0 0 24 24"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>
+        </button>`}
         <button class="note-delete" data-delete-id="${note.id}" title="Borrar" aria-label="Borrar">
           <svg class="nav-svg" viewBox="0 0 24 24"><path d="M3 6h18"></path><path d="M8 6V4h8v2"></path><path d="M19 6l-1 14H6L5 6"></path></svg>
         </button>
       </div>
     </div>
-    ${contentHtml(note)}
+    ${state.editingId === note.id ? editorHtml(note) : `${contentHtml(note)}
     ${chips}
-    ${code}
+    ${code}`}
     ${links}
     ${statusHtml(note)}`;
 }
 
 export function renderNotes(feed: HTMLElement): void {
+  // Si se re-dibuja mientras editas (sincronización), no se pierde lo que escribiste
+  const editing = feed.querySelector<HTMLTextAreaElement>('.note-edit');
+  const draft = editing ? { id: editing.dataset.editInput, value: editing.value, focused: document.activeElement === editing } : null;
+  renderCards(feed);
+  if (draft && state.editingId !== null) {
+    const ta = feed.querySelector<HTMLTextAreaElement>(`[data-edit-input="${draft.id}"]`);
+    if (ta) {
+      ta.value = draft.value;
+      if (draft.focused) ta.focus();
+    }
+  }
+}
+
+function renderCards(feed: HTMLElement): void {
   const notes = visibleNotes();
   if (notes.length === 0) {
     // Feed vacío = nada en pantalla; el aviso solo aparece al filtrar o buscar

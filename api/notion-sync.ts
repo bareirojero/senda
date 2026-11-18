@@ -2,6 +2,12 @@ import { Client } from '@notionhq/client';
 import { errorMessage, header, type ApiRequest, type ApiResponse } from './_lib/http.js';
 import { requireAccess, resolveAuth } from './_lib/auth.js';
 
+/** Bloques cuyo contenido se puede editar desde Senda */
+const EDITABLE_BLOCKS = new Set([
+  'paragraph', 'to_do', 'heading_1', 'heading_2', 'heading_3', 'bulleted_list_item',
+  'numbered_list_item', 'toggle', 'quote', 'callout', 'equation', 'code'
+]);
+
 /** UUID de Notion, con o sin guiones. */
 const BLOCK_ID = /^[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}$/i;
 
@@ -176,9 +182,21 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   // PATCH: marcar / desmarcar una tarea
   if (req.method === 'PATCH') {
     try {
-      const { blockId, checked, property } = (req.body || {}) as { blockId?: string; checked?: boolean; property?: string };
+      const { blockId, checked, property, properties, block } = (req.body || {}) as {
+        blockId?: string;
+        checked?: boolean;
+        property?: string;
+        /** Edición de una fila: propiedades a actualizar */
+        properties?: Record<string, unknown>;
+        /** Edición de un bloque: { type, payload } (p. ej. paragraph + rich_text) */
+        block?: { type: string; payload: Record<string, unknown> };
+      };
       if (!blockId || !BLOCK_ID.test(blockId)) return res.status(400).json({ error: 'blockId inválido.' });
-      if (property) {
+      if (properties && typeof properties === 'object') {
+        await notion.pages.update({ page_id: blockId, properties: properties as any });
+      } else if (block && EDITABLE_BLOCKS.has(block.type)) {
+        await notion.blocks.update({ block_id: blockId, [block.type]: block.payload } as any);
+      } else if (property) {
         // Fila de una base: la casilla es una propiedad (p. ej. "Hecho")
         await notion.pages.update({ page_id: blockId, properties: { [property]: { checkbox: !!checked } } as any });
       } else {
