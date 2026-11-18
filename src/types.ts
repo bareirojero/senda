@@ -34,7 +34,9 @@ export interface Note {
   /** 'question': pregunta al asistente (no se envía a Notion) */
   kind?: 'question';
   /** Estado del envío a Notion, como los tildes de un chat */
-  status?: 'sending' | 'sent' | 'error' | 'local';
+  status?: 'sending' | 'sent' | 'error' | 'local' | 'queued';
+  /** Envío pendiente (sin conexión): se reintenta solo en este dispositivo */
+  outbox?: { kind: 'blocks'; blocks: unknown[]; pageId: string } | { kind: 'row'; databaseId: string; properties: Record<string, unknown> };
   /** Dónde quedó en Notion (página o base) */
   dest?: string;
   /** Respuesta de IA todavía en camino */
@@ -96,4 +98,14 @@ export interface NotionDatabase {
   id: string;
   title: string;
   properties: DbProperty[];
+}
+
+/** Tarea pendiente leída de una base de Notion (GET /api/tasks) */
+export interface TaskRow {
+  id: string;
+  url: string;
+  title: string;
+  date: string | null;
+  selects: Record<string, string[]>;
+  relations: Record<string, string[]>;
 }

@@ -33,7 +33,7 @@ export function onSyncState(fn: (s: SyncState, detail?: string) => void): void {
 
 /** Forma canónica para comparar (sin campos locales ni efímeros). */
 export function serialize(n: Note): string {
-  const { inboxId: _a, pending: _b, ...rest } = n as Note & { inboxId?: string };
+  const { inboxId: _a, pending: _b, outbox: _c, ...rest } = n as Note & { inboxId?: string };
   return JSON.stringify(rest, Object.keys(rest).sort());
 }
 
@@ -81,7 +81,8 @@ export async function pull(local: Note[]): Promise<{ notes: Note[]; settings: Re
     const r = remote.get(key);
     if (r) {
       const changedHere = entry && serialize(n) !== entry.v;
-      merged.push(changedHere ? n : r);
+      // El envío pendiente es de este dispositivo: se conserva aunque se tome la versión del servidor
+      merged.push(changedHere ? n : n.outbox ? { ...r, outbox: n.outbox } : r);
       if (!changedHere) synced[key] = { v: serialize(r), inboxId: r.inboxId };
       remote.delete(key);
     } else if (entry) {
@@ -124,7 +125,8 @@ async function push(getNotes: () => Note[]): Promise<void> {
       const key = String(n.id);
       const v = serialize(n);
       if (synced[key]?.v === v) continue;
-      const res = await request('POST', { note: { ...n, inboxId: synced[key]?.inboxId } });
+      const { outbox: _o, ...shared } = n;
+      const res = await request('POST', { note: { ...shared, inboxId: synced[key]?.inboxId } });
       if (!res.ok) { failed = true; continue; }
       const { inboxId } = await res.json();
       synced[key] = { v, inboxId };
@@ -147,7 +149,7 @@ async function push(getNotes: () => Note[]): Promise<void> {
 }
 
 /** Ajustes compartidos entre dispositivos */
-const SHARED_SETTINGS = [KEYS.tasksDb, KEYS.aiFill, KEYS.notionPage] as const;
+const SHARED_SETTINGS = [KEYS.tasksDb, KEYS.aiFill, KEYS.notionPage, KEYS.todayGroupProp] as const;
 
 export function applySettings(settings: Record<string, string>): void {
   for (const k of SHARED_SETTINGS) {

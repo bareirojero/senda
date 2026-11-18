@@ -2,16 +2,18 @@ import './style.css';
 import { state, persistNotes, ensureTopic, syncTopicsFromNotion, findTopic, onPersist } from './state';
 import { applySettings, onSyncState, pull, pushSettings, schedulePush } from './lib/sync';
 import { MentionMenu, type MentionItem } from './ui/mention-menu';
+import { TodayPanel, localDay } from './ui/today';
+import { VoiceInput } from './ui/voice';
 import { slugify } from './data/seed';
 import { extractRow, norm, schemaForAi, tagFor, toNotionDate, type AiExtraction } from './lib/extract';
 import { DEFAULT_TOPIC } from './data/seed';
 import { parseInputToNotion } from './lib/parser';
-import { KEYS, getItem, setItem } from './lib/storage';
-import { accessKeyRequired, aiRoute, appendBlocks, createRow, deleteBlocks, fetchNotionSession, logoutNotion, setTodoChecked, OAUTH_LOGIN_URL } from './lib/api';
+import { KEYS, getItem, getJSON, setItem, setJSON } from './lib/storage';
+import { accessKeyRequired, lastFailureRetryable, aiRoute, appendBlocks, createRow, fetchTasks, deleteBlocks, fetchNotionSession, logoutNotion, setTodoChecked, OAUTH_LOGIN_URL } from './lib/api';
 import { SlashMenu } from './ui/slash-menu';
 import { renderNotes, renderSidebarTopics } from './ui/feed';
 import { initGraph, stopGraph } from './ui/graph';
-import type { NotionDatabase, NotionSession, View } from './types';
+import type { Note, NotionDatabase, NotionSession, TaskRow, View } from './types';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -44,6 +46,7 @@ const el = {
   oauthLogin: $<HTMLButtonElement>('btn-oauth-login'),
   oauthLogout: $<HTMLButtonElement>('btn-oauth-logout'),
   syncStatus: $('sync-status'),
+  cfgTodayGroup: $<HTMLSelectElement>('cfg-today-group'),
   cfgAccessKey: $<HTMLInputElement>('cfg-access-key'),
   cfgTasksDb: $<HTMLSelectElement>('cfg-tasks-db'),
   cfgAiFill: $<HTMLInputElement>('cfg-ai-fill'),
@@ -52,6 +55,80 @@ const el = {
 };
 
 const slashMenu = new SlashMenu(el.input, el.slash);
+
+/* ───────────── Vista Hoy ───────────── */
+
+const TODAY_KEYS = { group: KEYS.todayGroup, collapsed: KEYS.todayCollapsed } as const;
+const today = new TodayPanel($('today-panel'), (t) => void completeTask(t), {
+  get: (k) => getItem(TODAY_KEYS[k as keyof typeof TODAY_KEYS]),
+  set: (k, v) => setItem(TODAY_KEYS[k as keyof typeof TODAY_KEYS], v)
+});
+let todayDoneProp: string | null = null;
+
+function tasksDatabase(): NotionDatabase | undefined {
+  const id = tasksDbId();
+  return (session?.databases || []).find((d) => d.id === id);
+}
+
+/** Select que agrupa los botones de Hoy: el elegido en Personalizar o uno tipo "Ámbito" (2–4 opciones). */
+function todayGroupProp(db: NotionDatabase): string {
+  const saved = getItem(KEYS.todayGroupProp);
+  if (saved === '__none__') return '';
+  const selects = db.properties.filter((p) => p.type === 'select' && p.options?.length);
+  if (saved && selects.some((p) => p.name === saved)) return saved;
+  return (
+    selects.find((p) => /[aá]mbito|area|contexto|scope/i.test(p.name))?.name ||
+    selects.find((p) => p.options!.length >= 2 && p.options!.length <= 4)?.name ||
+    ''
+  );
+}
+
+let refreshingTasks = false;
+async function refreshTasks(): Promise<void> {
+  const db = tasksDatabase();
+  if (!session || !db) return today.hide();
+  if (refreshingTasks) return;
+  refreshingTasks = true;
+  const data = await fetchTasks(db.id);
+  refreshingTasks = false;
+  if (!data) return;
+  todayDoneProp = data.doneProp;
+  const groupProp = todayGroupProp(db);
+  const relTitles = new Map<string, string>();
+  for (const p of db.properties) for (const t of p.targets || []) relTitles.set(t.id, t.title);
+  today.setData(data.tasks, {
+    groupProp,
+    groupOptions: db.properties.find((p) => p.name === groupProp)?.options || [],
+    relTitles
+  });
+}
+
+async function completeTask(task: TaskRow): Promise<void> {
+  const ok = await withStatus(() => setTodoChecked(task.id, true, todayDoneProp || 'Hecho'), 'Notion • Error al marcar');
+  today.settle(task.id, ok);
+  const note = state.notes.find((n) => n.notionBlockIds?.[0]?.replace(/-/g, '') === task.id.replace(/-/g, ''));
+  if (ok && note) {
+    note.done = true;
+    persistNotes();
+    render();
+  }
+}
+
+/** Tareas pendientes como texto, para que Gemini responda con lo que hay en Notion. */
+function tasksForAi(): string {
+  const now = localDay();
+  const targets = tasksDatabase()?.properties.flatMap((p) => p.targets || []) || [];
+  return today
+    .all()
+    .slice(0, 80)
+    .map((t) => {
+      const day = t.date ? localDay(new Date(t.date.length <= 10 ? `${t.date}T12:00:00` : t.date)) : '';
+      const extra = Object.entries(t.selects).map(([k, v]) => `${k}: ${v.join('/')}`);
+      const rel = Object.values(t.relations).flat().map((id) => targets.find((x) => x.id === id)?.title).filter(Boolean);
+      return `- ${t.title}${t.date ? ` · fecha ${t.date.slice(0, 16).replace('T', ' ')}${day < now ? ' (vencida)' : ''}` : ' · sin fecha'}${extra.length ? ` · ${extra.join(' · ')}` : ''}${rel.length ? ` · Obra: ${rel.join(', ')}` : ''}`;
+    })
+    .join('\n');
+}
 const mentionMenu = new MentionMenu(el.input, $('mention-menu'), mentionItems);
 
 /** Base a la que apuntan las #etiquetas: @destino escrito, tema activo o base de tareas. */
@@ -161,6 +238,7 @@ async function toggleTask(id: number): Promise<void> {
   const blockId = note.notionBlockIds?.[0];
   if (!session || !blockId) return pulseSync();
   await withStatus(() => setTodoChecked(blockId, !!note.done, note.notionDoneProp), 'Notion • Error al marcar');
+  if (note.notionDoneProp) void refreshTasks();
 }
 
 /** Borra una nota de Senda y, si se envió a Notion, también sus bloques allí. */
@@ -231,13 +309,57 @@ async function pushBlocks(noteId: number, blocks: Parameters<typeof appendBlocks
   const ids = await withStatus(() => appendBlocks(blocks, pageId), 'Notion • Error al enviar');
   const note = state.notes.find((n) => n.id === noteId);
   if (note) {
-    if (ids) note.notionBlockIds = ids;
-    note.status = ids ? 'sent' : 'error';
     note.dest = (topic && state.topics[topic]?.pageId && state.topics[topic]?.label) || session?.pages.find((p) => p.id === pageId)?.title || 'Página destino';
-    persistNotes();
-    render();
+    settleSend(note, ids, { kind: 'blocks', blocks, pageId });
   }
 }
+
+/* ───────────── Sin conexión: cola de envíos ───────────── */
+
+/** Marca el resultado de un envío; si falló por red, queda "En espera" con lo necesario para reintentar. */
+function settleSend(note: Note, ids: string[] | null, outbox: NonNullable<Note['outbox']>): void {
+  if (ids) {
+    note.notionBlockIds = ids;
+    note.status = 'sent';
+    delete note.outbox;
+  } else if (lastFailureRetryable) {
+    note.status = 'queued';
+    note.outbox = outbox;
+    el.wsStatus.textContent = 'Notion • Sin conexión';
+    el.avatar.classList.add('offline');
+  } else {
+    note.status = 'error';
+    delete note.outbox;
+  }
+  persistNotes();
+  render();
+}
+
+let flushing = false;
+async function flushOutbox(): Promise<void> {
+  if (flushing || !session) return;
+  const queued = state.notes.filter((n) => n.status === 'queued' && n.outbox).reverse(); // del más viejo al más nuevo
+  if (queued.length === 0) return;
+  flushing = true;
+  let sentTasks = false;
+  for (const note of queued) {
+    const o = note.outbox!;
+    const ids = o.kind === 'row' ? await createRow(o.databaseId, o.properties) : await appendBlocks(o.blocks as Parameters<typeof appendBlocks>[0], o.pageId);
+    if (!ids && lastFailureRetryable) break; // sigue sin conexión: se reintenta después
+    settleSend(note, ids, o);
+    if (ids && o.kind === 'row') sentTasks = true;
+  }
+  flushing = false;
+  const stillQueued = state.notes.some((n) => n.status === 'queued');
+  el.avatar.classList.toggle('offline', stillQueued);
+  el.wsStatus.textContent = stillQueued ? 'Notion • Sin conexión' : idleStatus();
+  if (sentTasks) void refreshTasks();
+}
+
+window.addEventListener('online', () => {
+  if (!session || offline) void loadSession();
+  else void flushOutbox();
+});
 
 function initials(name: string): string {
   return name
@@ -250,8 +372,22 @@ function initials(name: string): string {
 
 /* ───────────── Sesión de Notion (OAuth / token) ───────────── */
 
+/** true cuando se trabaja con la copia guardada de Notion porque no hay conexión */
+let offline = false;
+
 async function loadSession(): Promise<void> {
-  session = await fetchNotionSession();
+  const fresh = await fetchNotionSession();
+  offline = false;
+  if (fresh) {
+    session = fresh;
+    setJSON(KEYS.sessionCache, fresh);
+  } else if (!accessKeyRequired && (lastFailureRetryable || !navigator.onLine)) {
+    // Sin conexión: se usa la última copia (bases, obras, opciones) para seguir clasificando
+    session = getJSON<NotionSession | null>(KEYS.sessionCache, null);
+    offline = !!session;
+  } else {
+    session = null;
+  }
 
   if (session) {
     el.userName.textContent = session.user.name;
@@ -260,7 +396,7 @@ async function loadSession(): Promise<void> {
     render();
   }
   el.wsStatus.textContent = accessKeyRequired ? 'Notion • Falta clave' : idleStatus();
-  el.avatar.classList.toggle('offline', !session);
+  el.avatar.classList.toggle('offline', !session || offline);
   if (accessKeyRequired) el.syncStatus.textContent = 'Falta la clave de acceso: escríbela abajo y guarda.';
 
   const viaOAuth = session?.source === 'oauth';
@@ -273,7 +409,13 @@ async function loadSession(): Promise<void> {
 
   fillPageSelect();
   fillTasksDbSelect();
+  if (offline) {
+    el.wsStatus.textContent = 'Notion • Sin conexión';
+    return;
+  }
   if (session) await syncFromNotion();
+  void refreshTasks();
+  void flushOutbox();
 }
 
 /* ───────────── Historial compartido (base "Senda · Bandeja") ───────────── */
@@ -309,10 +451,17 @@ onSyncState((s, detail) => {
 
 // Al volver a la app (otro dispositivo pudo agregar cosas) y cada minuto si está a la vista
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible' && session && Date.now() - lastPull > 5000) void syncFromNotion();
+  if (document.visibilityState === 'visible' && session && Date.now() - lastPull > 5000) {
+    void syncFromNotion();
+    void refreshTasks();
+  }
 });
 setInterval(() => {
-  if (document.visibilityState === 'visible' && session) void syncFromNotion();
+  if (document.visibilityState !== 'visible' || !session) return;
+  if (offline) return void loadSession(); // ¿volvió la conexión?
+  void syncFromNotion();
+  void refreshTasks();
+  void flushOutbox();
 }, 60000);
 
 function fillTasksDbSelect(): void {
@@ -323,6 +472,14 @@ function fillTasksDbSelect(): void {
     ...dbs.map((d) => new Option(d.title, d.id, false, d.id === current))
   );
   el.cfgAiFill.checked = !!getItem(KEYS.aiFill);
+
+  const db = tasksDatabase();
+  const selects = (db?.properties || []).filter((p) => p.type === 'select' && p.options?.length);
+  const groupProp = db ? todayGroupProp(db) : '';
+  el.cfgTodayGroup.replaceChildren(
+    new Option('Sin botones', '__none__', false, !groupProp),
+    ...selects.map((p) => new Option(`${p.name} (${p.options!.join(' / ')})`, p.name, false, p.name === groupProp))
+  );
 }
 
 function fillPageSelect(): void {
@@ -372,6 +529,7 @@ async function saveApiConfig(): Promise<void> {
   if (token) setItem(KEYS.notionToken, token);
   setItem(KEYS.notionPage, page);
   setItem(KEYS.tasksDb, el.cfgTasksDb.value);
+  setItem(KEYS.todayGroupProp, el.cfgTodayGroup.value);
   if (el.cfgAccessKey.value.trim()) setItem(KEYS.accessKey, el.cfgAccessKey.value.trim());
   setItem(KEYS.aiFill, el.cfgAiFill.checked ? '1' : '');
   if (el.cfgGemini.value.trim()) setItem(KEYS.gemini, el.cfgGemini.value.trim());
@@ -573,12 +731,8 @@ async function submitToDatabase(db: NotionDatabase, rawText: string, isTask: boo
 
   const ids = await withStatus(() => createRow(db.id, row.properties), 'Notion • Error al enviar');
   const note = state.notes.find((n) => n.id === noteId);
-  if (note) {
-    if (ids) note.notionBlockIds = ids;
-    note.status = ids ? 'sent' : 'error';
-    persistNotes();
-    render();
-  }
+  if (note) settleSend(note, ids, { kind: 'row', databaseId: db.id, properties: row.properties });
+  if (ids && db.id === tasksDbId()) void refreshTasks();
 }
 
 function aiErrorText(model: string, code: string | undefined, detail: string): string {
@@ -606,7 +760,7 @@ async function submitAi(mode: 'gemini' | 'claude', query: string, raw: string): 
   render();
 
   el.avatar.classList.add('syncing');
-  const data = await aiRoute(mode, query || raw, Object.keys(state.topics), { history });
+  const data = await aiRoute(mode, query || raw, Object.keys(state.topics), { history, tasks: tasksForAi(), today: localDay() });
   el.avatar.classList.remove('syncing');
 
   const reply = state.notes.find((n) => n.id === now + 1);
@@ -649,6 +803,25 @@ function setSidebarCollapsed(collapsed: boolean): void {
 function setDrawer(open: boolean): void {
   document.body.classList.toggle('drawer-open', open);
 }
+
+// Riel (móvil): buscar y abrir el menú
+$('rail-search').addEventListener('click', (e) => {
+  e.stopPropagation();
+  const open = !document.body.classList.contains('search-open');
+  document.body.classList.toggle('search-open', open);
+  if (open) el.search.focus();
+  else if (el.search.value) {
+    el.search.value = '';
+    el.search.dispatchEvent(new Event('input'));
+  }
+});
+el.search.addEventListener('blur', () => {
+  if (!el.search.value) document.body.classList.remove('search-open');
+});
+$('rail-menu').addEventListener('click', (e) => {
+  e.stopPropagation();
+  setDrawer(!document.body.classList.contains('drawer-open'));
+});
 
 $('btn-mobile-menu').addEventListener('click', (e) => {
   e.stopPropagation();
@@ -717,6 +890,7 @@ $('btn-info').addEventListener('click', (e) => {
 
 el.search.addEventListener('input', () => {
   state.searchText = el.search.value;
+  today.setQuery(el.search.value);
   if (state.activeView !== 'stream' && state.activeView !== 'topic') setView('stream');
   else render();
 });
@@ -754,6 +928,37 @@ document.addEventListener('click', (e) => {
 window.addEventListener('resize', () => {
   if (state.activeView === 'graph') initGraph(el.graphCanvas, el.graphCard);
 });
+
+/* El punto del riel refleja el estado del avatar (conectado / sin conexión / sincronizando) */
+const railStatus = $('rail-status');
+new MutationObserver(() => {
+  railStatus.classList.toggle('offline', el.avatar.classList.contains('offline') || offline);
+  railStatus.classList.toggle('syncing', el.avatar.classList.contains('syncing'));
+  railStatus.title = el.wsStatus.textContent || 'Notion';
+}).observe(el.avatar, { attributes: true, attributeFilter: ['class'] });
+
+/* ───────────── Dictado por voz ───────────── */
+
+new VoiceInput(
+  $<HTMLButtonElement>('btn-mic'),
+  el.input,
+  async (audio) => {
+    const r = await aiRoute('transcribe', '', [], { audio });
+    return r.error ? { error: r.code === 'missing_key' ? 'falta GEMINI_API_KEY' : r.error } : { text: r.text || '' };
+  },
+  (msg) => {
+    el.wsStatus.textContent = msg;
+    el.input.placeholder = msg;
+    setTimeout(() => {
+      el.wsStatus.textContent = idleStatus();
+      el.input.placeholder = '';
+    }, 4000);
+  },
+  () => {
+    autosize();
+    el.input.dispatchEvent(new Event('input'));
+  }
+);
 
 /* ───────────── Arranque ───────────── */
 

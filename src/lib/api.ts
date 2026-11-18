@@ -1,4 +1,4 @@
-import type { NotionSession } from '../types';
+import type { NotionSession, TaskRow } from '../types';
 import type { NotionBlock } from './parser';
 import { KEYS, getItem } from './storage';
 
@@ -26,6 +26,9 @@ export function apiHeaders(): Record<string, string> {
 /** true si el último intento falló por falta de clave de acceso */
 export let accessKeyRequired = false;
 
+/** true si el último envío falló por red (sin conexión o servidor caído): vale la pena reintentar */
+export let lastFailureRetryable = false;
+
 export async function fetchNotionSession(): Promise<NotionSession | null> {
   try {
     const res = await fetch('/api/notion-sync', { headers: notionHeaders(), credentials: 'same-origin' });
@@ -50,10 +53,12 @@ export async function appendBlocks(blocks: NotionBlock[], targetPageId: string):
       headers: { 'Content-Type': 'application/json', ...notionHeaders() },
       body: JSON.stringify({ targetPageId: targetPageId || undefined, blocks })
     });
+    lastFailureRetryable = res.status >= 500;
     if (!res.ok) return null;
     const data = (await res.json()) as { results?: { id: string }[] };
     return (data.results || []).map((r) => r.id);
   } catch {
+    lastFailureRetryable = true;
     return null;
   }
 }
@@ -98,7 +103,7 @@ export interface AiResponse {
 }
 
 export async function aiRoute(
-  mode: 'gemini' | 'claude' | 'auto' | 'extract',
+  mode: 'gemini' | 'claude' | 'auto' | 'extract' | 'transcribe',
   prompt: string,
   availableTopics: string[],
   extra: Record<string, unknown> = {}
@@ -131,9 +136,22 @@ export async function createRow(databaseId: string, properties: Record<string, u
       headers: { 'Content-Type': 'application/json', ...notionHeaders() },
       body: JSON.stringify({ databaseId, properties })
     });
+    lastFailureRetryable = res.status >= 500;
     if (!res.ok) return null;
     const data = (await res.json()) as { results?: { id: string }[] };
     return (data.results || []).map((r) => r.id);
+  } catch {
+    lastFailureRetryable = true;
+    return null;
+  }
+}
+
+/** Tareas pendientes de una base. null si no se pudo (sin red, sin acceso). */
+export async function fetchTasks(dbId: string): Promise<{ tasks: TaskRow[]; doneProp: string | null } | null> {
+  try {
+    const res = await fetch(`/api/tasks?db=${encodeURIComponent(dbId)}`, { headers: apiHeaders(), credentials: 'same-origin' });
+    if (!res.ok) return null;
+    return (await res.json()) as { tasks: TaskRow[]; doneProp: string | null };
   } catch {
     return null;
   }

@@ -12,7 +12,11 @@ export const KEYS = {
   aiFill: 'senda_ai_fill',
   notionSectionOpen: 'senda_notion_section_open',
   synced: 'senda_synced',
-  accessKey: 'senda_access_key'
+  accessKey: 'senda_access_key',
+  todayGroupProp: 'senda_today_group_prop',
+  todayGroup: 'senda_today_group',
+  todayCollapsed: 'senda_today_collapsed',
+  sessionCache: 'senda_session_cache'
 } as const;
 
 type Key = (typeof KEYS)[keyof typeof KEYS];

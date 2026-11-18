@@ -75,8 +75,11 @@ export function parseSpanishDate(text: string, now: Date): DateHit {
   let time: { h: number; m: number } | undefined;
   let afternoon = false;
 
+  // Se lleva también el conector de delante ("para mañana", "hasta el viernes"),
+  // para no dejar títulos como "Entregar planos para"
   const take = (re: RegExp, fn: (m: RegExpMatchArray) => void) => {
-    const m = rest.match(re);
+    const withConnector = new RegExp(`(?:\\s(?:para|hasta|antes\\s+del?|desde|del|de|por))?${re.source}`, re.flags);
+    const m = rest.match(withConnector);
     if (!m) return false;
     fn(m);
     rest = rest.replace(m[0], ' ');

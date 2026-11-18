@@ -99,3 +99,31 @@ describe('instrucciones según el modo', () => {
     expect(system).toContain('Asistente: Recibir H-30');
   });
 });
+
+describe('transcribe (dictado)', () => {
+  it('manda el audio como inline_data a Gemini y devuelve el texto', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(geminiText(' recibir H-30 mañana '));
+    vi.stubGlobal('fetch', fetchMock);
+    const res = await call({ mode: 'transcribe', audio: 'UklGRg==' }, { 'x-gemini-key': 'AIza' });
+    expect(res.body).toEqual({ model: 'Gemini', text: 'recibir H-30 mañana' });
+    const parts = JSON.parse(fetchMock.mock.calls[0]![1].body).contents[0].parts;
+    expect(parts[0]).toEqual({ inline_data: { mime_type: 'audio/wav', data: 'UklGRg==' } });
+  });
+
+  it('sin llave de Gemini avisa (Claude no transcribe audio)', async () => {
+    const res = await call({ mode: 'transcribe', audio: 'UklGRg==' }, { 'x-claude-key': 'sk-ant' });
+    expect(res.body).toMatchObject({ code: 'missing_key' });
+  });
+});
+
+describe('chat con tareas de Notion', () => {
+  it('pasa las tareas y la fecha, y prohíbe afirmar que guardó algo', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(geminiText('ok'));
+    vi.stubGlobal('fetch', fetchMock);
+    await call({ mode: 'gemini', prompt: '¿qué tengo hoy?', today: '2026-11-18', tasks: '- Recibir H-30 · fecha 2026-11-18 08:00' }, { 'x-gemini-key': 'AIza' });
+    const system = JSON.parse(fetchMock.mock.calls[0]![1].body).systemInstruction.parts[0].text as string;
+    expect(system).toContain('Hoy es 2026-11-18');
+    expect(system).toContain('- Recibir H-30 · fecha 2026-11-18 08:00');
+    expect(system).toContain('Nunca digas que guardaste');
+  });
+});
