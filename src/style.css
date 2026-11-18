@@ -1015,6 +1015,24 @@ canvas#neural-canvas:active { cursor: grabbing; }
 
 .composer-brand { display: none; }
 
+/* Estado del envío (como los tildes de un chat) */
+.note-status { margin-top: 8px; font-size: 11.5px; color: var(--text-light); text-align: right; }
+.note-status.s-sent { color: var(--pastel-mint-fg); }
+.note-status.s-error { color: var(--pastel-rose-fg); }
+
+/* Gemini escribiendo… */
+.typing { display: flex; gap: 4px; padding: 6px 0 2px; }
+.typing span {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--pastel-purple-fg); opacity: 0.35;
+  animation: typing 1.2s infinite ease-in-out;
+}
+.typing span:nth-child(2) { animation-delay: 0.15s; }
+.typing span:nth-child(3) { animation-delay: 0.3s; }
+@keyframes typing { 0%, 60%, 100% { opacity: 0.25; transform: translateY(0); } 30% { opacity: 0.9; transform: translateY(-3px); } }
+
+.question-card .note-top { display: none; }
+
 /* ───────────── Móvil / Android ───────────── */
 @media (max-width: 720px) {
   body { padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
@@ -1064,8 +1082,15 @@ canvas#neural-canvas:active { cursor: grabbing; }
 
   .content-column { padding: 12px 14px 0; }
 
-  /* Feed arriba, caja de escritura abajo (estilo mensajería) */
-  .notes-feed { order: 1; padding-bottom: 12px; }
+  /* Feed arriba, caja de escritura abajo (estilo mensajería).
+     column-reverse: lo más nuevo queda abajo y el scroll arranca abajo. */
+  .notes-feed { order: 1; padding: 12px 0; flex-direction: column-reverse; gap: 10px; }
+
+  /* Burbujas: lo tuyo a la derecha, el asistente a la izquierda */
+  .note-card { max-width: 88%; }
+  .note-card.user-msg { align-self: flex-end; border-radius: 16px 16px 4px 16px; }
+  .note-card.ai-card { align-self: flex-start; max-width: 92%; border-radius: 16px 16px 16px 4px; }
+  .note-card.question-card { background: var(--pastel-blue-bg); border-color: transparent; }
   .composer-wrapper {
     order: 2;
     display: flex;

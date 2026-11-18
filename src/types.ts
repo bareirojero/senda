@@ -31,6 +31,14 @@ export interface Note {
   notionDoneProp?: string;
   /** Propiedades completadas (fecha, categoría, obra…) para mostrar en la tarjeta. */
   chips?: string[];
+  /** 'question': pregunta al asistente (no se envía a Notion) */
+  kind?: 'question';
+  /** Estado del envío a Notion, como los tildes de un chat */
+  status?: 'sending' | 'sent' | 'error' | 'local';
+  /** Dónde quedó en Notion (página o base) */
+  dest?: string;
+  /** Respuesta de IA todavía en camino */
+  pending?: boolean;
 }
 
 export interface TopicMeta {
