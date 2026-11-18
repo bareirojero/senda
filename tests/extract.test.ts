@@ -118,3 +118,24 @@ describe('extractRow con el esquema de Mis tareas', () => {
     expect(r.properties.Obra).toEqual({ relation: [{ id: 'obra-olimpia' }] });
   });
 });
+
+describe('#etiquetas para relaciones y opciones con guiones', () => {
+  it('#pjc y #olimpia enlazan la obra y salen del título', () => {
+    const r = extractRow('revisar planos #olimpia #urgente', misTareas, NOW);
+    expect(r.properties.Obra).toEqual({ relation: [{ id: 'obra-olimpia' }] });
+    expect(r.title).toBe('Revisar planos');
+    expect(r.chips).toEqual(['🔥 Urgente', '↗ Fundaciones OLIMPIA']);
+  });
+
+  it('#edificio-pjc (título con guiones) y #master-estructuras', () => {
+    const r = extractRow('repasar losas #edificio-pjc #master-estructuras', misTareas, NOW);
+    expect(r.properties.Obra).toEqual({ relation: [{ id: 'obra-pjc' }] });
+    expect(r.properties['Categoría']).toEqual({ select: { name: '🏗️ Máster Estructuras' } });
+  });
+
+  it('no duplica la obra si aparece por # y por texto', () => {
+    const r = extractRow('ir a PJC #pjc', misTareas, NOW);
+    expect(r.properties.Obra).toEqual({ relation: [{ id: 'obra-pjc' }] });
+    expect(r.chips.filter((c) => c.startsWith('↗'))).toHaveLength(1);
+  });
+});

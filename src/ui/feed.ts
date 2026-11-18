@@ -46,6 +46,19 @@ function contentHtml(note: Note): string {
   }
 }
 
+/** La hora se calcula desde el id (marca de tiempo): "Ahora" no sirve en otro dispositivo. */
+function timeLabel(note: Note): string {
+  if (note.id < 1e12) return note.time;
+  const d = new Date(note.id);
+  const now = new Date();
+  const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  const days = Math.round((new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime() - new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()) / 86400000);
+  if (Date.now() - note.id < 60000) return 'Ahora';
+  if (days === 0) return `Hoy, ${hm}`;
+  if (days === 1) return `Ayer, ${hm}`;
+  return `${d.getDate()}/${d.getMonth() + 1}, ${hm}`;
+}
+
 const STATUS_TEXT: Record<NonNullable<Note['status']>, string> = {
   sending: 'Enviando…',
   sent: '✓ En Notion',
@@ -86,7 +99,7 @@ function cardHtml(note: Note): string {
     <div class="note-top">
       <div class="note-badges">${badge}</div>
       <div class="note-meta">
-        <span class="badge-time">${escapeHtml(note.time)}</span>
+        <span class="badge-time">${escapeHtml(timeLabel(note))}</span>
         <button class="note-delete" data-delete-id="${note.id}" title="Borrar" aria-label="Borrar">
           <svg class="nav-svg" viewBox="0 0 24 24"><path d="M3 6h18"></path><path d="M8 6V4h8v2"></path><path d="M19 6l-1 14H6L5 6"></path></svg>
         </button>

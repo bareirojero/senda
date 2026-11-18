@@ -86,6 +86,8 @@
 
             <!-- Menú Desplegable Slash "/" -->
             <div class="slash-menu" id="slash-menu"></div>
+            <!-- Autocompletado @destino / #etiqueta -->
+            <div class="slash-menu" id="mention-menu"></div>
           </div>
 
           <!-- Feed de Notas -->
@@ -150,6 +152,11 @@
                 <button class="pill-action hidden" id="btn-oauth-logout">Desconectar</button>
                 <button class="btn-send" id="btn-oauth-login">Conectar con Notion</button>
               </div>
+            </div>
+            <div class="oauth-status" id="sync-status">Historial: solo en este dispositivo</div>
+            <div class="api-input-group">
+              <label>Clave de acceso de Senda (si definiste SENDA_ACCESS_KEY en Vercel)</label>
+              <input type="password" id="cfg-access-key" placeholder="La misma clave en todos tus dispositivos" />
             </div>
             <div class="api-input-group">
               <label>Página destino en Notion</label>
@@ -261,8 +268,17 @@
 
           <div class="sidebar-info-row">
             <div class="info-popover" id="info-popover">
-              <strong style="color: var(--text-main); display: block; margin-bottom: 4px;">Hub Inteligente</strong>
-              Todo lo que escribes aquí se clasifica y ordena en tus bases de datos de Notion automáticamente.
+              <strong class="guide-title">Cómo anotar</strong>
+              <dl class="guide">
+                <dt>#tarea …</dt><dd>Crea una tarea en tu base de tareas</dd>
+                <dt>@destino</dt><dd>Elige base o página (menú al escribir @)</dd>
+                <dt>#dato</dt><dd>Completa propiedades: #urgente, #pjc… (menú al escribir #)</dd>
+                <dt>mañana 8h</dt><dd>Fecha y hora: hoy, viernes, 3/12, en 5 días, 5 de la tarde</dd>
+                <dt>¿…?</dt><dd>Con «?» le preguntas a Gemini; no se guarda en Notion</dd>
+                <dt>/auto …</dt><dd>Gemini elige destino y datos por ti</dd>
+                <dt>/</dt><dd>Todos los bloques: títulos, código, LaTeX…</dd>
+              </dl>
+              <div class="guide-example">#tarea mañana 8h recibir H-30 #pjc #urgente</div>
             </div>
             <button class="btn-info-i" id="btn-info" title="Información">
               <svg class="nav-svg" style="width: 14px; height: 14px;" viewBox="0 0 24 24">

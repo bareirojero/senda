@@ -140,6 +140,26 @@ function matchOption(tag: string, options: string[]): string | undefined {
   return options.find((o) => norm(o) === t) || options.find((o) => norm(o).startsWith(t)) || options.find((o) => norm(o).split(' ').includes(t));
 }
 
+/** "#pjc" / "#fundaciones-olimpia" → fila relacionada por palabra clave o comienzo del título. */
+function matchTarget(tag: string, relationProps: DbProperty[]): { prop: string; id: string; title: string } | undefined {
+  const t = norm(tag);
+  if (!t) return undefined;
+  for (const p of relationProps) {
+    const targets = p.targets || [];
+    const hit =
+      targets.find((x) => x.keywords.some((k) => norm(k) === t) || norm(x.title) === t) ||
+      targets.find((x) => norm(x.title).startsWith(t)) ||
+      targets.find((x) => norm(x.title).split(' ').includes(t));
+    if (hit) return { prop: p.name, id: hit.id, title: hit.title };
+  }
+  return undefined;
+}
+
+/** Texto a insertar como #etiqueta para una opción o fila: sin emojis ni tildes, con guiones. */
+export function tagFor(label: string): string {
+  return norm(label).replace(/\s+/g, '-');
+}
+
 function hasWords(haystack: string, needle: string): boolean {
   const n = norm(needle);
   return n.length >= 2 && ` ${haystack} `.includes(` ${n} `);
@@ -175,8 +195,14 @@ export function extractRow(text: string, db: NotionDatabase, now = new Date(), a
     remaining = text;
   }
 
-  // 2) Selects / estado por #etiqueta
+  // 2) #etiquetas: opciones de selects/estado y filas de relaciones (#urgente, #master-estructuras, #pjc)
   const selectable = db.properties.filter((p) => ['select', 'multi_select', 'status'].includes(p.type) && p.options?.length);
+  const relationProps = byType('relation');
+  const relHits = new Map<string, Map<string, string>>(); // propiedad → id → título
+  const addRel = (prop: string, id: string, title: string) => {
+    if (!relHits.has(prop)) relHits.set(prop, new Map());
+    relHits.get(prop)!.set(id, title);
+  };
   const used = new Set<string>();
   remaining = remaining.replace(/(^|\s)#([\p{L}\p{N}_-]+)/gu, (full, pre: string, tag: string) => {
     for (const p of selectable) {
@@ -186,6 +212,11 @@ export function extractRow(text: string, db: NotionDatabase, now = new Date(), a
       used.add(p.name);
       setOption(props, p, opt);
       chips.push(opt);
+      return pre;
+    }
+    const target = matchTarget(tag, relationProps);
+    if (target) {
+      addRel(target.prop, target.id, target.title);
       return pre;
     }
     return full;
@@ -199,16 +230,19 @@ export function extractRow(text: string, db: NotionDatabase, now = new Date(), a
     chips.push(...values);
   }
 
-  // 3) Relaciones por título o palabras clave (el texto no se modifica: "PJC" sigue siendo informativo)
+  // 3) Relaciones por título o palabras clave en el texto (el texto no se modifica: "PJC" sigue siendo informativo)
   const n = norm(text);
-  for (const p of byType('relation')) {
+  for (const p of relationProps) {
     const aiTitles = ai?.relations?.[p.name] || [];
-    const hits = (p.targets || []).filter(
-      (t) => aiTitles.some((a) => a === t.title || a.startsWith(`${t.title} (`)) || hasWords(n, t.title) || t.keywords.some((k) => hasWords(n, k))
-    );
-    if (hits.length === 0) continue;
-    props[p.name] = { relation: hits.slice(0, 5).map((t) => ({ id: t.id })) };
-    chips.push(...hits.slice(0, 5).map((t) => `↗ ${t.title}`));
+    for (const t of p.targets || []) {
+      const named = aiTitles.some((a) => a === t.title || a.startsWith(`${t.title} (`)) || hasWords(n, t.title) || t.keywords.some((k) => hasWords(n, k));
+      if (named) addRel(p.name, t.id, t.title);
+    }
+  }
+  for (const [prop, hits] of relHits) {
+    const list = [...hits].slice(0, 5);
+    props[prop] = { relation: list.map(([id]) => ({ id })) };
+    chips.push(...list.map(([, title]) => `↗ ${title}`));
   }
 
   // 4) Título

@@ -1,10 +1,13 @@
 import './style.css';
-import { state, persistNotes, ensureTopic, syncTopicsFromNotion } from './state';
-import { extractRow, schemaForAi, toNotionDate, type AiExtraction } from './lib/extract';
+import { state, persistNotes, ensureTopic, syncTopicsFromNotion, findTopic, onPersist } from './state';
+import { applySettings, onSyncState, pull, pushSettings, schedulePush } from './lib/sync';
+import { MentionMenu, type MentionItem } from './ui/mention-menu';
+import { slugify } from './data/seed';
+import { extractRow, norm, schemaForAi, tagFor, toNotionDate, type AiExtraction } from './lib/extract';
 import { DEFAULT_TOPIC } from './data/seed';
 import { parseInputToNotion } from './lib/parser';
 import { KEYS, getItem, setItem } from './lib/storage';
-import { aiRoute, appendBlocks, createRow, deleteBlocks, fetchNotionSession, logoutNotion, setTodoChecked, OAUTH_LOGIN_URL } from './lib/api';
+import { accessKeyRequired, aiRoute, appendBlocks, createRow, deleteBlocks, fetchNotionSession, logoutNotion, setTodoChecked, OAUTH_LOGIN_URL } from './lib/api';
 import { SlashMenu } from './ui/slash-menu';
 import { renderNotes, renderSidebarTopics } from './ui/feed';
 import { initGraph, stopGraph } from './ui/graph';
@@ -40,6 +43,8 @@ const el = {
   oauthStatus: $('oauth-status'),
   oauthLogin: $<HTMLButtonElement>('btn-oauth-login'),
   oauthLogout: $<HTMLButtonElement>('btn-oauth-logout'),
+  syncStatus: $('sync-status'),
+  cfgAccessKey: $<HTMLInputElement>('cfg-access-key'),
   cfgTasksDb: $<HTMLSelectElement>('cfg-tasks-db'),
   cfgAiFill: $<HTMLInputElement>('cfg-ai-fill'),
   notionSectionBtn: $('btn-notion-section'),
@@ -47,6 +52,62 @@ const el = {
 };
 
 const slashMenu = new SlashMenu(el.input, el.slash);
+const mentionMenu = new MentionMenu(el.input, $('mention-menu'), mentionItems);
+
+/** Base a la que apuntan las #etiquetas: @destino escrito, tema activo o base de tareas. */
+function databaseForText(text: string): NotionDatabase | undefined {
+  const dbs = session?.databases || [];
+  const at = text.match(/@([\p{L}\p{N}_-]+)/u);
+  const key = (at && findTopic(at[1]!)) || state.activeTopic || '';
+  const id = state.topics[key]?.databaseId || tasksDbId();
+  return dbs.find((d) => d.id === id);
+}
+
+function matches(q: string, ...labels: string[]): boolean {
+  const n = norm(q);
+  return !n || labels.some((l) => norm(l).startsWith(n) || norm(l).split(' ').some((w) => w.startsWith(n)));
+}
+
+function mentionItems(trigger: '@' | '#', query: string, text: string): MentionItem[] {
+  if (trigger === '@') {
+    return Object.entries(state.topics)
+      .filter(([key, m]) => key !== 'ai' && (m.databaseId || m.pageId) && matches(query, key, m.label))
+      .sort(([, a], [, b]) => Number(!!b.databaseId) - Number(!!a.databaseId))
+      .map(([key, m]) => ({
+        icon: m.databaseId ? 'DB' : 'PG',
+        title: m.label,
+        desc: m.databaseId ? 'Crea una fila en esta base' : 'Agrega a esta página',
+        insert: `@${key}`,
+        group: m.databaseId ? 'Bases de datos' : 'Páginas'
+      }));
+  }
+
+  const items: MentionItem[] = [];
+  if (!text.trim().replace(/#[\p{L}\p{N}_-]*$/u, '').trim() && matches(query, 'tarea')) {
+    items.push({ icon: '✓', title: 'Tarea', desc: 'Crear una tarea', insert: '#tarea', group: 'Tipo' });
+  }
+  const db = databaseForText(text);
+  for (const p of db?.properties || []) {
+    if (p.options?.length && ['select', 'multi_select', 'status'].includes(p.type)) {
+      for (const o of p.options) if (matches(query, o)) items.push({ icon: '#', title: o, desc: p.name, insert: `#${tagFor(o)}`, group: p.name });
+    }
+    if (p.type === 'relation') {
+      for (const t of p.targets || []) {
+        if (!matches(query, t.title, ...t.keywords)) continue;
+        const tag = t.keywords[0] ? tagFor(t.keywords[0]) : tagFor(t.title);
+        items.push({ icon: '↗', title: t.title, desc: t.keywords.join(', ') || p.name, insert: `#${tag}`, group: p.name });
+      }
+    }
+  }
+  return items;
+}
+
+/** Base de tareas: la elegida en Personalizar o, si no hay, la que tenga "tarea" en el nombre. */
+function tasksDbId(): string {
+  const saved = getItem(KEYS.tasksDb);
+  if (saved) return saved;
+  return (session?.databases || []).find((d) => /tarea|task|to-?do/i.test(d.title))?.id || '';
+}
 let session: NotionSession | null = null;
 
 /* ───────────── Render ───────────── */
@@ -198,8 +259,9 @@ async function loadSession(): Promise<void> {
     syncTopicsFromNotion(session.pages, session.databases);
     render();
   }
-  el.wsStatus.textContent = idleStatus();
+  el.wsStatus.textContent = accessKeyRequired ? 'Notion • Falta clave' : idleStatus();
   el.avatar.classList.toggle('offline', !session);
+  if (accessKeyRequired) el.syncStatus.textContent = 'Falta la clave de acceso: escríbela abajo y guarda.';
 
   const viaOAuth = session?.source === 'oauth';
   el.oauthStatus.textContent = session
@@ -211,11 +273,51 @@ async function loadSession(): Promise<void> {
 
   fillPageSelect();
   fillTasksDbSelect();
+  if (session) await syncFromNotion();
 }
+
+/* ───────────── Historial compartido (base "Senda · Bandeja") ───────────── */
+
+let lastPull = 0;
+
+async function syncFromNotion(): Promise<void> {
+  lastPull = Date.now();
+  const result = await pull(state.notes);
+  if (!result) return;
+  applySettings(result.settings);
+  state.notes = result.notes;
+  for (const n of state.notes) if (n.topic && n.topic !== 'ai') ensureTopic(n.topic);
+  persistNotes(); // sube lo que solo estaba en este dispositivo
+  fillPageSelect();
+  fillTasksDbSelect();
+  render();
+}
+
+onPersist(() => schedulePush(() => state.notes));
+
+onSyncState((s, detail) => {
+  const text: Record<string, string> = {
+    off: 'Historial: solo en este dispositivo',
+    syncing: 'Historial: sincronizando con Notion…',
+    ok: 'Historial: sincronizado con Notion («Senda · Bandeja»)',
+    error: `Historial: no se pudo sincronizar${detail ? ` (${detail})` : ''}`,
+    access_key: 'Falta la clave de acceso: escríbela abajo y guarda.'
+  };
+  el.syncStatus.textContent = text[s] || '';
+  el.syncStatus.classList.toggle('connected', s === 'ok');
+});
+
+// Al volver a la app (otro dispositivo pudo agregar cosas) y cada minuto si está a la vista
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && session && Date.now() - lastPull > 5000) void syncFromNotion();
+});
+setInterval(() => {
+  if (document.visibilityState === 'visible' && session) void syncFromNotion();
+}, 60000);
 
 function fillTasksDbSelect(): void {
   const dbs = session?.databases || [];
-  const current = getItem(KEYS.tasksDb);
+  const current = tasksDbId();
   el.cfgTasksDb.replaceChildren(
     new Option('Ninguna: casilla en la página destino', ''),
     ...dbs.map((d) => new Option(d.title, d.id, false, d.id === current))
@@ -270,13 +372,15 @@ async function saveApiConfig(): Promise<void> {
   if (token) setItem(KEYS.notionToken, token);
   setItem(KEYS.notionPage, page);
   setItem(KEYS.tasksDb, el.cfgTasksDb.value);
+  if (el.cfgAccessKey.value.trim()) setItem(KEYS.accessKey, el.cfgAccessKey.value.trim());
   setItem(KEYS.aiFill, el.cfgAiFill.checked ? '1' : '');
   if (el.cfgGemini.value.trim()) setItem(KEYS.gemini, el.cfgGemini.value.trim());
   if (el.cfgClaude.value.trim()) setItem(KEYS.claude, el.cfgClaude.value.trim());
 
-  el.cfgToken.value = el.cfgGemini.value = el.cfgClaude.value = '';
+  el.cfgToken.value = el.cfgGemini.value = el.cfgClaude.value = el.cfgAccessKey.value = '';
   pulseSync();
   await loadSession();
+  await pushSettings();
   setView('stream');
 }
 
@@ -288,6 +392,7 @@ async function submitInput(): Promise<void> {
   el.input.value = '';
   autosize();
   slashMenu.close();
+  mentionMenu.close();
 
   if (raw === '/eliminar') {
     if (state.notes.length > 0) await deleteNote(state.notes[0]!.id);
@@ -318,12 +423,16 @@ async function submitInput(): Promise<void> {
   }
 
   const ai = raw.match(/^\/(gemini|claude|auto)\b\s*/i);
+  if (ai && ai[1]!.toLowerCase() === 'auto') {
+    await submitAuto(resolveDestinations(raw.slice(ai[0].length)));
+    return;
+  }
   if (ai) {
-    await submitAi(ai[1]!.toLowerCase() as 'gemini' | 'claude' | 'auto', raw.slice(ai[0].length), raw);
+    await submitAi(ai[1]!.toLowerCase() as 'gemini' | 'claude', raw.slice(ai[0].length), raw);
     return;
   }
 
-  const parsed = parseInputToNotion(raw, state.activeTopic || DEFAULT_TOPIC);
+  const parsed = parseInputToNotion(resolveDestinations(raw), state.activeTopic || DEFAULT_TOPIC);
 
   // Chat: una pregunta (texto con "?") va al asistente, no a Notion
   if (parsed.blockType === 'text' && !raw.startsWith('/') && raw.includes('?')) {
@@ -357,10 +466,60 @@ async function submitInput(): Promise<void> {
   void pushBlocks(noteId, parsed.notionBlocks, parsed.topic);
 }
 
+/** "@tareas" → "@mis-tareas": nombres aproximados (con tildes o espacios) al tema real. */
+function resolveDestinations(text: string): string {
+  return text.replace(/@([\p{L}\p{N}_-]+)/gu, (_full, token: string) => `@${findTopic(token) || slugify(token) || token}`);
+}
+
+/**
+ * /auto: Gemini elige el destino (base o página) y, si es una base, se completan sus propiedades.
+ */
+async function submitAuto(text: string): Promise<void> {
+  if (!text.trim()) return;
+  const explicit = text.match(/@([a-zA-Z0-9_-]+)/)?.[1];
+  let key = explicit && state.topics[explicit] ? explicit : '';
+  let blockType = '';
+
+  if (!key) {
+    el.avatar.classList.add('syncing');
+    const destinations = Object.entries(state.topics)
+      .filter(([k, m]) => k !== 'ai' && (m.databaseId || m.pageId || k === DEFAULT_TOPIC))
+      .map(([k, m]) => `${k}: ${m.label}${m.databaseId ? ' (base de datos)' : ''}`);
+    const data = await aiRoute('auto', text, destinations, { history: chatHistory(6) });
+    el.avatar.classList.remove('syncing');
+    const topic = String(data.parsed?.topic || '').split(':')[0]!.trim();
+    key = state.topics[topic] ? topic : findTopic(topic) || '';
+    blockType = String(data.parsed?.blockType || '');
+    if (data.error) {
+      state.notes.unshift({ id: Date.now(), time: 'Ahora', topic: 'ai', isAI: true, model: 'Gemini Auto', text: aiErrorText('Gemini', data.code, data.error), links: [] });
+      persistNotes();
+      render();
+      return;
+    }
+  }
+
+  const db = key ? (session?.databases || []).find((d) => d.id === state.topics[key]?.databaseId) : undefined;
+  if (db) {
+    await submitToDatabase(db, text.replace(/@[a-zA-Z0-9_-]+/g, '').trim(), blockType === 'todo' || db.id === tasksDbId(), true);
+    return;
+  }
+  // Página o sin destino claro: se guarda como nota normal en ese tema
+  const parsed = parseInputToNotion(key ? `${text} @${key}` : text, DEFAULT_TOPIC);
+  ensureTopic(parsed.topic);
+  const noteId = Date.now();
+  state.notes.unshift({
+    id: noteId, time: 'Ahora', topic: parsed.topic, blockType: parsed.blockType, done: false,
+    text: parsed.cleanText, code: parsed.codeBlock ?? null, links: [], status: session ? 'sending' : 'local', chips: ['✦ auto']
+  });
+  persistNotes();
+  render();
+  void pushBlocks(noteId, parsed.notionBlocks, parsed.topic);
+}
+
 function targetDatabase(topic: string, isTask: boolean): NotionDatabase | undefined {
   const dbs = session?.databases || [];
   const explicit = state.topics[topic]?.databaseId;
-  const id = explicit || (isTask ? getItem(KEYS.tasksDb) : '');
+  const id = explicit || (isTask ? tasksDbId() : '');
   return id ? dbs.find((d) => d.id === id) : undefined;
 }
 
@@ -370,7 +529,7 @@ function plain(s: string): string {
 }
 
 /** Crea una fila en la base con las propiedades deducidas del texto (y de la IA si está activada). */
-async function submitToDatabase(db: NotionDatabase, rawText: string, isTask: boolean): Promise<void> {
+async function submitToDatabase(db: NotionDatabase, rawText: string, isTask: boolean, forceAi = false): Promise<void> {
   const text = plain(rawText);
   const topic = Object.entries(state.topics).find(([, m]) => m.databaseId === db.id)?.[0] || DEFAULT_TOPIC;
   const now = new Date();
@@ -397,7 +556,7 @@ async function submitToDatabase(db: NotionDatabase, rawText: string, isTask: boo
   if (!session) return pulseSync();
 
   let row = first;
-  if (getItem(KEYS.aiFill)) {
+  if (forceAi || getItem(KEYS.aiFill)) {
     el.avatar.classList.add('syncing');
     const ai = await aiRoute('extract', text, [], {
       schema: schemaForAi(db),
@@ -437,7 +596,7 @@ function chatHistory(limit = 12): { role: 'user' | 'assistant'; text: string }[]
     .map((n) => ({ role: n.isAI ? 'assistant' : 'user', text: n.chips?.length ? `${n.text} (${n.chips.join(', ')})` : n.text }));
 }
 
-async function submitAi(mode: 'gemini' | 'claude' | 'auto', query: string, raw: string): Promise<void> {
+async function submitAi(mode: 'gemini' | 'claude', query: string, raw: string): Promise<void> {
   const model = mode === 'claude' ? 'Claude' : 'Gemini';
   const history = chatHistory();
   const now = Date.now();
@@ -519,6 +678,7 @@ el.input.addEventListener('input', autosize);
 
 el.input.addEventListener('keydown', (e) => {
   if (slashMenu.handleKey(e)) return;
+  if (mentionMenu.handleKey(e)) return;
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
     e.preventDefault();
     void submitInput();
