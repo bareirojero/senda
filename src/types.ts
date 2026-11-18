@@ -33,6 +33,8 @@ export interface TopicMeta {
   bg: string;
   fg: string;
   dot: string;
+  /** ID de la página de Notion a la que va el tema (si viene de Notion). */
+  pageId?: string;
 }
 
 export type View = 'stream' | 'graph' | 'config' | 'topic';

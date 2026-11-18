@@ -19,6 +19,17 @@ function resolveAuth(req: ApiRequest) {
   return null;
 }
 
+/** En un workspace personal hay una sola persona: es el usuario. Requiere el permiso "Read user information". */
+async function soleWorkspacePerson(notion: Client) {
+  try {
+    const list: any = await notion.users.list({ page_size: 20 });
+    const people = list.results.filter((u: any) => u.type === 'person');
+    return people.length === 1 ? (people[0] as { name?: string | null; avatar_url?: string | null }) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export default async function handler(req: ApiRequest, res: ApiResponse) {
   if (req.method === 'OPTIONS') return res.status(200).end();
 
@@ -44,10 +55,14 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         return { id: p.id as string, title };
       });
 
-      // En OAuth, users.me devuelve el bot; el nombre real viene del owner guardado en la sesión.
-      const ownerName = me?.bot?.owner?.user?.name;
-      const name = auth.session?.userName || ownerName || me?.name || 'Usuario Notion';
-      const avatar = auth.session?.userAvatar || me?.bot?.owner?.user?.avatar_url || me?.avatar_url || null;
+      // users.me devuelve el BOT (p. ej. "Senda"), no a la persona. Orden para el nombre real:
+      // NOTION_USER_NAME → dueño OAuth → dueño del bot → única persona del workspace.
+      let person: { name?: string | null; avatar_url?: string | null } | undefined =
+        auth.session?.userName ? { name: auth.session.userName, avatar_url: auth.session.userAvatar } : me?.bot?.owner?.user;
+      if (!person?.name) person = await soleWorkspacePerson(notion);
+
+      const name = process.env.NOTION_USER_NAME || person?.name || me?.bot?.workspace_name || me?.name || 'Usuario Notion';
+      const avatar = person?.avatar_url || null;
 
       return res.status(200).json({
         source: auth.source,

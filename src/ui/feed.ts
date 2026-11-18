@@ -52,10 +52,11 @@ function cardHtml(note: Note): string {
 
   const code = note.code ? `<pre class="note-code"><code>${escapeHtml(note.code)}</code></pre>` : '';
 
-  const links = note.links?.length
+  const known = (note.links || []).filter((l) => state.topics[l]);
+  const links = known.length
     ? `<div class="note-connections">
          <span>Enlazado con:</span>
-         ${note.links.map((l) => `<span class="conn-chip" data-topic="${escapeHtml(l)}">${escapeHtml(topicMeta(l).label)}</span>`).join('')}
+         ${known.map((l) => `<span class="conn-chip" data-topic="${escapeHtml(l)}">${escapeHtml(topicMeta(l).label)}</span>`).join('')}
        </div>`
     : '';
 
@@ -72,6 +73,11 @@ function cardHtml(note: Note): string {
 export function renderNotes(feed: HTMLElement): void {
   const notes = visibleNotes();
   if (notes.length === 0) {
+    // Feed vacío = nada en pantalla; el aviso solo aparece al filtrar o buscar
+    if (state.notes.length === 0) {
+      feed.replaceChildren();
+      return;
+    }
     feed.innerHTML = '<div style="text-align:center; color:var(--text-light); padding: 40px 0;">Sin notas en esta vista.</div>';
     return;
   }
@@ -91,6 +97,8 @@ export function renderSidebarTopics(container: HTMLElement, totalCount: HTMLElem
   const frag = document.createDocumentFragment();
   for (const [key, meta] of Object.entries(state.topics)) {
     const count = state.notes.filter((n) => n.topic === key).length;
+    // Solo páginas reales de Notion o temas que ya tienen notas
+    if (!meta.pageId && count === 0) continue;
     const selected = state.activeView === 'topic' && state.activeTopic === key;
     const el = document.createElement('div');
     el.className = `side-link ${selected ? 'active' : ''}`;
