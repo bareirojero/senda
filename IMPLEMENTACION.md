@@ -100,3 +100,22 @@ npx tauri init
   npx tauri android build
   ```
 - **Automatización en GitHub Actions:** Puedes añadir un workflow `.github/workflows/release.yml` con `tauri-apps/tauri-action` para que GitHub compile automáticamente los instaladores de Windows, Linux y Android cada vez que publiques un tag `v1.x.x`.
+
+---
+
+## Bases de datos de Notion (tareas con propiedades)
+
+1. En la conexión **Senda** de Notion, da acceso a las bases que quieras usar (p. ej. la página **Tareas**, que contiene *Mis tareas* y *🏗️ Obras*).
+2. En **Personalizar → Base de datos para tareas**, elige *Mis tareas*.
+3. Escribe una tarea (`/todo` o `#tarea`) y Senda crea una **fila** con las propiedades deducidas del texto:
+
+| Escribes | Propiedad |
+|---|---|
+| `hoy`, `mañana`, `pasado mañana`, `el viernes`, `3/12`, `en 5 días` | Fecha |
+| `8h`, `8:30`, `a las 9`, `5 de la tarde`, `3pm` | Hora de la Fecha |
+| `#urgente`, `#master`, `#ruso`, `#personal` | Selects (coincide con el comienzo de la opción) |
+| el nombre o una *Palabra clave* de la obra (`PJC`, `Olimpia`) | Relación Obra |
+
+- `@mis-tareas` o `@obras` envían cualquier nota a esa base aunque no sea tarea.
+- **Completar propiedades con IA** (Personalizar) suma Gemini/Claude para textos más libres; solo acepta opciones que existan en la base.
+- Marcar la casilla en Senda actualiza *Hecho*; borrar la nota manda la fila a la papelera de Notion.

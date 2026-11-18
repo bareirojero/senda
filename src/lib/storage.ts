@@ -7,7 +7,10 @@ export const KEYS = {
   claude: 'senda_claude_key',
   theme: 'senda_theme',
   fontSize: 'senda_font_size',
-  sidebarCollapsed: 'senda_sidebar_collapsed'
+  sidebarCollapsed: 'senda_sidebar_collapsed',
+  tasksDb: 'senda_tasks_db',
+  aiFill: 'senda_ai_fill',
+  notionSectionOpen: 'senda_notion_section_open'
 } as const;
 
 type Key = (typeof KEYS)[keyof typeof KEYS];

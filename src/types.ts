@@ -27,6 +27,10 @@ export interface Note {
   model?: string;
   /** IDs de los bloques creados en Notion (para borrar o marcar después). */
   notionBlockIds?: string[];
+  /** Si la nota es una fila de base: nombre de la casilla "Hecho" para sincronizarla. */
+  notionDoneProp?: string;
+  /** Propiedades completadas (fecha, categoría, obra…) para mostrar en la tarjeta. */
+  chips?: string[];
 }
 
 export interface TopicMeta {
@@ -37,6 +41,8 @@ export interface TopicMeta {
   dot: string;
   /** ID de la página de Notion a la que va el tema (si viene de Notion). */
   pageId?: string;
+  /** ID de la base de Notion: @tema crea una fila en ella. */
+  databaseId?: string;
 }
 
 export type View = 'stream' | 'graph' | 'config' | 'topic';
@@ -62,4 +68,24 @@ export interface NotionSession {
   user: { name: string; avatar: string | null };
   workspace: string | null;
   pages: { id: string; title: string }[];
+  databases?: NotionDatabase[];
+}
+
+export interface RelationTarget {
+  id: string;
+  title: string;
+  keywords: string[];
+}
+
+export interface DbProperty {
+  name: string;
+  type: string;
+  options?: string[];
+  targets?: RelationTarget[];
+}
+
+export interface NotionDatabase {
+  id: string;
+  title: string;
+  properties: DbProperty[];
 }

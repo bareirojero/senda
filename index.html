@@ -149,6 +149,16 @@
               <select id="cfg-notion-page-select" class="hidden"></select>
               <input type="text" id="cfg-notion-page" placeholder="32 caracteres hexadecimales de la URL de Notion" />
             </div>
+            <div class="api-input-group">
+              <label>Base de datos para tareas (/todo y #tarea)</label>
+              <select id="cfg-tasks-db">
+                <option value="">Ninguna: casilla en la página destino</option>
+              </select>
+            </div>
+            <label class="api-toggle">
+              <input type="checkbox" id="cfg-ai-fill" />
+              <span>Completar propiedades con IA (fecha, categoría, obra…) cuando haya una llave configurada</span>
+            </label>
             <details class="api-advanced">
               <summary>Token de integración interna (avanzado)</summary>
               <div class="api-input-group">
@@ -212,8 +222,14 @@
           </div>
 
           <div class="side-group">
-            <div class="side-heading">Notion</div>
-            <div id="topics-sidebar"></div>
+            <button class="side-heading side-heading-toggle" id="btn-notion-section" aria-expanded="false">
+              <span>Notion</span>
+              <span class="side-heading-right">
+                <span class="side-heading-count" id="notion-section-count"></span>
+                <svg class="nav-svg side-chevron" viewBox="0 0 24 24"><polyline points="9 6 15 12 9 18"></polyline></svg>
+              </span>
+            </button>
+            <div id="topics-sidebar" class="topics-list collapsed"></div>
           </div>
         </div>
 

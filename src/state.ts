@@ -30,14 +30,22 @@ export function ensureTopic(key: string, meta?: TopicMeta): TopicMeta {
   return state.topics[key];
 }
 
-/** Las páginas de Notion compartidas con Senda pasan a ser temas: @slug envía a esa página. */
-export function syncTopicsFromPages(pages: { id: string; title: string }[]): void {
+/**
+ * Páginas y bases compartidas con Senda pasan a ser temas:
+ * @slug envía a esa página, o crea una fila si es una base.
+ */
+export function syncTopicsFromNotion(pages: { id: string; title: string }[], databases: { id: string; title: string }[] = []): void {
   for (const [key, meta] of Object.entries(state.topics)) {
-    if (meta.pageId) delete state.topics[key];
+    if (meta.pageId || meta.databaseId) delete state.topics[key];
+  }
+  for (const d of databases) {
+    const key = slugify(d.title) || d.id.replace(/-/g, '').slice(0, 8);
+    if (key === DEFAULT_TOPIC) continue;
+    state.topics[key] = { label: d.title, notionDest: `DB / ${d.title}`, databaseId: d.id, ...paletteFor(key) };
   }
   for (const p of pages) {
     const key = slugify(p.title) || p.id.replace(/-/g, '').slice(0, 8);
-    if (key === DEFAULT_TOPIC) continue;
+    if (key === DEFAULT_TOPIC || state.topics[key]) continue;
     state.topics[key] = { label: p.title, notionDest: `Page / ${p.title}`, pageId: p.id, ...paletteFor(key) };
   }
   // Temas de notas guardadas cuya página ya no existe vuelven a ser temas locales.

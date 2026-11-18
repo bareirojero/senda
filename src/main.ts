@@ -1,13 +1,14 @@
 import './style.css';
-import { state, persistNotes, ensureTopic, syncTopicsFromPages } from './state';
+import { state, persistNotes, ensureTopic, syncTopicsFromNotion } from './state';
+import { extractRow, schemaForAi, toNotionDate, type AiExtraction } from './lib/extract';
 import { DEFAULT_TOPIC } from './data/seed';
 import { parseInputToNotion } from './lib/parser';
 import { KEYS, getItem, setItem } from './lib/storage';
-import { aiRoute, appendBlocks, deleteBlocks, fetchNotionSession, logoutNotion, setTodoChecked, OAUTH_LOGIN_URL } from './lib/api';
+import { aiRoute, appendBlocks, createRow, deleteBlocks, fetchNotionSession, logoutNotion, setTodoChecked, OAUTH_LOGIN_URL } from './lib/api';
 import { SlashMenu } from './ui/slash-menu';
 import { renderNotes, renderSidebarTopics } from './ui/feed';
 import { initGraph, stopGraph } from './ui/graph';
-import type { NotionSession, View } from './types';
+import type { NotionDatabase, NotionSession, View } from './types';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -38,7 +39,11 @@ const el = {
   cfgClaude: $<HTMLInputElement>('cfg-claude-key'),
   oauthStatus: $('oauth-status'),
   oauthLogin: $<HTMLButtonElement>('btn-oauth-login'),
-  oauthLogout: $<HTMLButtonElement>('btn-oauth-logout')
+  oauthLogout: $<HTMLButtonElement>('btn-oauth-logout'),
+  cfgTasksDb: $<HTMLSelectElement>('cfg-tasks-db'),
+  cfgAiFill: $<HTMLInputElement>('cfg-ai-fill'),
+  notionSectionBtn: $('btn-notion-section'),
+  notionSectionCount: $('notion-section-count')
 };
 
 const slashMenu = new SlashMenu(el.input, el.slash);
@@ -47,7 +52,8 @@ let session: NotionSession | null = null;
 /* ───────────── Render ───────────── */
 
 function render(): void {
-  renderSidebarTopics(el.topics, el.total);
+  const shown = renderSidebarTopics(el.topics, el.total);
+  el.notionSectionCount.textContent = shown ? String(shown) : '';
   if (state.activeView === 'stream' || state.activeView === 'topic') renderNotes(el.feed);
 }
 
@@ -93,7 +99,7 @@ async function toggleTask(id: number): Promise<void> {
   render();
   const blockId = note.notionBlockIds?.[0];
   if (!session || !blockId) return pulseSync();
-  await withStatus(() => setTodoChecked(blockId, !!note.done), 'Notion • Error al marcar');
+  await withStatus(() => setTodoChecked(blockId, !!note.done, note.notionDoneProp), 'Notion • Error al marcar');
 }
 
 /** Borra una nota de Senda y, si se envió a Notion, también sus bloques allí. */
@@ -186,7 +192,7 @@ async function loadSession(): Promise<void> {
   if (session) {
     el.userName.textContent = session.user.name;
     el.avatar.textContent = initials(session.user.name);
-    syncTopicsFromPages(session.pages);
+    syncTopicsFromNotion(session.pages, session.databases);
     render();
   }
   el.wsStatus.textContent = idleStatus();
@@ -201,6 +207,17 @@ async function loadSession(): Promise<void> {
   el.oauthLogout.classList.toggle('hidden', !viaOAuth);
 
   fillPageSelect();
+  fillTasksDbSelect();
+}
+
+function fillTasksDbSelect(): void {
+  const dbs = session?.databases || [];
+  const current = getItem(KEYS.tasksDb);
+  el.cfgTasksDb.replaceChildren(
+    new Option('Ninguna: casilla en la página destino', ''),
+    ...dbs.map((d) => new Option(d.title, d.id, false, d.id === current))
+  );
+  el.cfgAiFill.checked = !!getItem(KEYS.aiFill);
 }
 
 function fillPageSelect(): void {
@@ -249,6 +266,8 @@ async function saveApiConfig(): Promise<void> {
   const token = el.cfgToken.value.trim();
   if (token) setItem(KEYS.notionToken, token);
   setItem(KEYS.notionPage, page);
+  setItem(KEYS.tasksDb, el.cfgTasksDb.value);
+  setItem(KEYS.aiFill, el.cfgAiFill.checked ? '1' : '');
   if (el.cfgGemini.value.trim()) setItem(KEYS.gemini, el.cfgGemini.value.trim());
   if (el.cfgClaude.value.trim()) setItem(KEYS.claude, el.cfgClaude.value.trim());
 
@@ -301,6 +320,14 @@ async function submitInput(): Promise<void> {
   }
 
   const parsed = parseInputToNotion(raw, state.activeTopic || DEFAULT_TOPIC);
+
+  // ¿Va a una base? @base explícito, o tarea con "Base de datos para tareas" configurada
+  const db = targetDatabase(parsed.topic, parsed.blockType === 'todo');
+  if (db && (parsed.blockType === 'todo' || parsed.blockType === 'text')) {
+    await submitToDatabase(db, parsed.cleanText, parsed.blockType === 'todo');
+    return;
+  }
+
   ensureTopic(parsed.topic);
 
   const noteId = Date.now();
@@ -319,6 +346,67 @@ async function submitInput(): Promise<void> {
   void pushBlocks(noteId, parsed.notionBlocks, parsed.topic);
 }
 
+function targetDatabase(topic: string, isTask: boolean): NotionDatabase | undefined {
+  const dbs = session?.databases || [];
+  const explicit = state.topics[topic]?.databaseId;
+  const id = explicit || (isTask ? getItem(KEYS.tasksDb) : '');
+  return id ? dbs.find((d) => d.id === id) : undefined;
+}
+
+/** Texto plano para el título: sin marcas de Markdown. */
+function plain(s: string): string {
+  return s.replace(/\*\*(.+?)\*\*/g, '$1').replace(/\*(.+?)\*/g, '$1').replace(/`(.+?)`/g, '$1').replace(/~(.+?)~/g, '$1');
+}
+
+/** Crea una fila en la base con las propiedades deducidas del texto (y de la IA si está activada). */
+async function submitToDatabase(db: NotionDatabase, rawText: string, isTask: boolean): Promise<void> {
+  const text = plain(rawText);
+  const topic = Object.entries(state.topics).find(([, m]) => m.databaseId === db.id)?.[0] || DEFAULT_TOPIC;
+  const now = new Date();
+  const first = extractRow(text, db, now);
+  const isTodo = isTask || !!first.doneProp;
+
+  const noteId = Date.now();
+  state.notes.unshift({
+    id: noteId,
+    time: 'Ahora',
+    topic,
+    blockType: isTodo ? 'todo' : 'text',
+    done: false,
+    text: first.title,
+    chips: first.chips,
+    notionDoneProp: first.doneProp,
+    links: []
+  });
+  persistNotes();
+  render();
+
+  if (!session) return pulseSync();
+
+  let row = first;
+  if (getItem(KEYS.aiFill)) {
+    el.avatar.classList.add('syncing');
+    const ai = await aiRoute('extract', text, [], {
+      schema: schemaForAi(db),
+      today: toNotionDate(now, { h: now.getHours(), m: now.getMinutes() })
+    });
+    el.avatar.classList.remove('syncing');
+    if (ai.parsed) {
+      row = extractRow(text, db, now, ai.parsed as AiExtraction);
+      const note = state.notes.find((n) => n.id === noteId);
+      if (note) Object.assign(note, { text: row.title, chips: row.chips });
+      render();
+    }
+  }
+
+  const ids = await withStatus(() => createRow(db.id, row.properties), 'Notion • Error al enviar');
+  const note = state.notes.find((n) => n.id === noteId);
+  if (ids && note) {
+    note.notionBlockIds = ids;
+    persistNotes();
+  }
+}
+
 async function submitAi(mode: 'gemini' | 'claude' | 'auto', query: string, raw: string): Promise<void> {
   const model = mode === 'claude' ? 'Claude' : 'Gemini';
   state.notes.unshift({ id: Date.now(), time: 'Ahora', topic: state.activeTopic || DEFAULT_TOPIC, blockType: 'text', text: query || raw, links: [] });
@@ -334,11 +422,11 @@ async function submitAi(mode: 'gemini' | 'claude' | 'auto', query: string, raw: 
     time: 'Ahora',
     topic: 'ai',
     isAI: true,
-    model: data?.model || model,
-    text: data
-      ? data.text || data.parsed?.summary || 'Procesado en Notion.'
-      : `No pude contactar a ${model}. Revisa las llaves en **Personalizar** o las variables de entorno.`,
-    links: (data?.parsed?.relatedTopics || []).filter((t) => state.topics[t])
+    model: data.model || model,
+    text: data.error
+      ? `No pude usar ${model}: *${data.error}*. Configura la llave en **Personalizar** o en Vercel.`
+      : data.text || data.parsed?.summary || 'Procesado.',
+    links: (data.parsed?.relatedTopics || []).filter((t) => state.topics[t])
   });
   persistNotes();
   pulseSync();
@@ -378,6 +466,17 @@ $('btn-mobile-menu').addEventListener('click', (e) => {
   setDrawer(!document.body.classList.contains('drawer-open'));
 });
 $('drawer-backdrop').addEventListener('click', () => setDrawer(false));
+
+/* ───────────── Sección "Notion" desplegable ───────────── */
+
+function setNotionSection(open: boolean): void {
+  el.topics.classList.toggle('collapsed', !open);
+  el.notionSectionBtn.setAttribute('aria-expanded', String(open));
+  setItem(KEYS.notionSectionOpen, open ? '1' : '');
+}
+
+el.notionSectionBtn.addEventListener('click', () => setNotionSection(el.topics.classList.contains('collapsed')));
+setNotionSection(!!getItem(KEYS.notionSectionOpen));
 
 /* ───────────── Eventos ───────────── */
 
