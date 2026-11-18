@@ -8,16 +8,33 @@ import { KEYS, getItem } from './storage';
  * el token interno manual, si existe, tiene prioridad y va en `x-notion-token`.
  */
 function notionHeaders(): Record<string, string> {
+  return apiHeaders();
+}
+
+/** Cabeceras comunes: clave de acceso de Senda, token manual y página destino. */
+export function apiHeaders(): Record<string, string> {
   const headers: Record<string, string> = {};
+  const key = getItem(KEYS.accessKey);
+  if (key) headers['x-senda-key'] = key;
   const token = getItem(KEYS.notionToken);
   if (token) headers['x-notion-token'] = token;
+  const page = getItem(KEYS.notionPage);
+  if (page) headers['x-notion-page-id'] = page;
   return headers;
 }
+
+/** true si el último intento falló por falta de clave de acceso */
+export let accessKeyRequired = false;
 
 export async function fetchNotionSession(): Promise<NotionSession | null> {
   try {
     const res = await fetch('/api/notion-sync', { headers: notionHeaders(), credentials: 'same-origin' });
+    if (res.status === 401) {
+      const body = (await res.json().catch(() => ({}))) as { code?: string };
+      accessKeyRequired = body.code === 'access_key';
+    }
     if (!res.ok) return null;
+    accessKeyRequired = false;
     return (await res.json()) as NotionSession;
   } catch {
     return null;
@@ -91,6 +108,7 @@ export async function aiRoute(
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        ...apiHeaders(),
         'x-gemini-key': getItem(KEYS.gemini),
         'x-claude-key': getItem(KEYS.claude)
       },

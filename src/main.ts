@@ -1,12 +1,13 @@
 import './style.css';
-import { state, persistNotes, ensureTopic, syncTopicsFromNotion, findTopic } from './state';
+import { state, persistNotes, ensureTopic, syncTopicsFromNotion, findTopic, onPersist } from './state';
+import { applySettings, onSyncState, pull, pushSettings, schedulePush } from './lib/sync';
 import { MentionMenu, type MentionItem } from './ui/mention-menu';
 import { slugify } from './data/seed';
 import { extractRow, norm, schemaForAi, tagFor, toNotionDate, type AiExtraction } from './lib/extract';
 import { DEFAULT_TOPIC } from './data/seed';
 import { parseInputToNotion } from './lib/parser';
 import { KEYS, getItem, setItem } from './lib/storage';
-import { aiRoute, appendBlocks, createRow, deleteBlocks, fetchNotionSession, logoutNotion, setTodoChecked, OAUTH_LOGIN_URL } from './lib/api';
+import { accessKeyRequired, aiRoute, appendBlocks, createRow, deleteBlocks, fetchNotionSession, logoutNotion, setTodoChecked, OAUTH_LOGIN_URL } from './lib/api';
 import { SlashMenu } from './ui/slash-menu';
 import { renderNotes, renderSidebarTopics } from './ui/feed';
 import { initGraph, stopGraph } from './ui/graph';
@@ -42,6 +43,8 @@ const el = {
   oauthStatus: $('oauth-status'),
   oauthLogin: $<HTMLButtonElement>('btn-oauth-login'),
   oauthLogout: $<HTMLButtonElement>('btn-oauth-logout'),
+  syncStatus: $('sync-status'),
+  cfgAccessKey: $<HTMLInputElement>('cfg-access-key'),
   cfgTasksDb: $<HTMLSelectElement>('cfg-tasks-db'),
   cfgAiFill: $<HTMLInputElement>('cfg-ai-fill'),
   notionSectionBtn: $('btn-notion-section'),
@@ -256,8 +259,9 @@ async function loadSession(): Promise<void> {
     syncTopicsFromNotion(session.pages, session.databases);
     render();
   }
-  el.wsStatus.textContent = idleStatus();
+  el.wsStatus.textContent = accessKeyRequired ? 'Notion • Falta clave' : idleStatus();
   el.avatar.classList.toggle('offline', !session);
+  if (accessKeyRequired) el.syncStatus.textContent = 'Falta la clave de acceso: escríbela abajo y guarda.';
 
   const viaOAuth = session?.source === 'oauth';
   el.oauthStatus.textContent = session
@@ -269,7 +273,47 @@ async function loadSession(): Promise<void> {
 
   fillPageSelect();
   fillTasksDbSelect();
+  if (session) await syncFromNotion();
 }
+
+/* ───────────── Historial compartido (base "Senda · Bandeja") ───────────── */
+
+let lastPull = 0;
+
+async function syncFromNotion(): Promise<void> {
+  lastPull = Date.now();
+  const result = await pull(state.notes);
+  if (!result) return;
+  applySettings(result.settings);
+  state.notes = result.notes;
+  for (const n of state.notes) if (n.topic && n.topic !== 'ai') ensureTopic(n.topic);
+  persistNotes(); // sube lo que solo estaba en este dispositivo
+  fillPageSelect();
+  fillTasksDbSelect();
+  render();
+}
+
+onPersist(() => schedulePush(() => state.notes));
+
+onSyncState((s, detail) => {
+  const text: Record<string, string> = {
+    off: 'Historial: solo en este dispositivo',
+    syncing: 'Historial: sincronizando con Notion…',
+    ok: 'Historial: sincronizado con Notion («Senda · Bandeja»)',
+    error: `Historial: no se pudo sincronizar${detail ? ` (${detail})` : ''}`,
+    access_key: 'Falta la clave de acceso: escríbela abajo y guarda.'
+  };
+  el.syncStatus.textContent = text[s] || '';
+  el.syncStatus.classList.toggle('connected', s === 'ok');
+});
+
+// Al volver a la app (otro dispositivo pudo agregar cosas) y cada minuto si está a la vista
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && session && Date.now() - lastPull > 5000) void syncFromNotion();
+});
+setInterval(() => {
+  if (document.visibilityState === 'visible' && session) void syncFromNotion();
+}, 60000);
 
 function fillTasksDbSelect(): void {
   const dbs = session?.databases || [];
@@ -328,13 +372,15 @@ async function saveApiConfig(): Promise<void> {
   if (token) setItem(KEYS.notionToken, token);
   setItem(KEYS.notionPage, page);
   setItem(KEYS.tasksDb, el.cfgTasksDb.value);
+  if (el.cfgAccessKey.value.trim()) setItem(KEYS.accessKey, el.cfgAccessKey.value.trim());
   setItem(KEYS.aiFill, el.cfgAiFill.checked ? '1' : '');
   if (el.cfgGemini.value.trim()) setItem(KEYS.gemini, el.cfgGemini.value.trim());
   if (el.cfgClaude.value.trim()) setItem(KEYS.claude, el.cfgClaude.value.trim());
 
-  el.cfgToken.value = el.cfgGemini.value = el.cfgClaude.value = '';
+  el.cfgToken.value = el.cfgGemini.value = el.cfgClaude.value = el.cfgAccessKey.value = '';
   pulseSync();
   await loadSession();
+  await pushSettings();
   setView('stream');
 }
 

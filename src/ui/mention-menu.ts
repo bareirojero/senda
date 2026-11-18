@@ -18,6 +18,7 @@ export class MentionMenu {
   private selected = 0;
   private items: MentionItem[] = [];
   private start = 0;
+  private typed = '';
 
   constructor(
     private readonly input: HTMLTextAreaElement,
@@ -40,6 +41,11 @@ export class MentionMenu {
     if (e.key === 'ArrowDown') this.selected = (this.selected + 1) % count;
     else if (e.key === 'ArrowUp') this.selected = (this.selected - 1 + count) % count;
     else if (e.key === 'Enter' || e.key === 'Tab') {
+      // Ya escribiste la etiqueta completa: Enter envía en vez de reemplazarla
+      if (e.key === 'Enter' && this.items.some((i) => i.insert.toLowerCase() === this.typed.toLowerCase())) {
+        this.close();
+        return false;
+      }
       e.preventDefault();
       this.apply(this.selected);
       return true;
@@ -66,6 +72,7 @@ export class MentionMenu {
     if (!m) return this.close();
     const trigger = m[1] as '@' | '#';
     this.start = caret - m[2]!.length - 1;
+    this.typed = trigger + m[2]!;
     this.items = this.source(trigger, m[2]!, this.input.value).slice(0, 30);
     this.selected = 0;
     if (this.items.length === 0) return this.close();

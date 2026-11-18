@@ -1256,4 +1256,20 @@ aside.right-sidebar.collapsed .topics-list.collapsed { display: block; }
 .note-content.md .md-list { margin: 2px 0 8px; padding-left: 20px; }
 .note-content.md .md-list li { margin: 2px 0; }
 
+/* Guía rápida (botón i) */
+.info-popover { width: 300px; max-height: 70vh; overflow-y: auto; }
+.guide-title { color: var(--text-main); display: block; margin-bottom: 8px; }
+.guide { display: grid; grid-template-columns: auto 1fr; gap: 6px 10px; margin: 0; font-size: 12px; }
+.guide dt { font-family: var(--font-mono); font-size: 11.5px; color: var(--accent-main); white-space: nowrap; }
+.guide dd { margin: 0; color: var(--text-muted); }
+.guide-example {
+  margin-top: 10px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--bg-subtle);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-main);
+}
+
 .hidden { display: none !important; }

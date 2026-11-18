@@ -119,3 +119,20 @@ npx tauri init
 - `@mis-tareas` o `@obras` envían cualquier nota a esa base aunque no sea tarea.
 - **Completar propiedades con IA** (Personalizar) suma Gemini/Claude para textos más libres; solo acepta opciones que existan en la base.
 - Marcar la casilla en Senda actualiza *Hecho*; borrar la nota manda la fila a la papelera de Notion.
+
+---
+
+## Historial sincronizado entre dispositivos
+
+El historial de Senda (notas, tareas, preguntas y respuestas) y los ajustes compartidos se guardan en una base de Notion **«Senda · Bandeja»**, que Senda crea sola dentro de tu página destino la primera vez que guardas algo. Cada dispositivo (PC, navegador del celular, APK) carga el chat desde ahí al abrir la app, al volver a ella y cada minuto mientras está a la vista.
+
+- Una fila por mensaje: *Mensaje*, *Tipo* (Nota/Tarea/Pregunta/Respuesta), *Destino*, *Estado*, *ID Senda* y *Datos* (uso interno).
+- La fila «⚙︎ Ajustes de Senda» guarda la base de tareas, la página destino y la opción de IA.
+- Borrar en Senda manda la fila a la papelera de Notion; editar el título de una fila en Notion se refleja en Senda.
+
+## Clave de acceso (recomendado)
+
+Sin clave, cualquiera que conozca tu URL de Vercel puede leer tu historial, escribir en tu Notion y gastar tus llaves de IA.
+
+1. En Vercel → **Settings → Environment Variables**, agrega `SENDA_ACCESS_KEY` con una clave larga (p. ej. `openssl rand -base64 24`) y haz **Redeploy**.
+2. En cada dispositivo: **Personalizar → Clave de acceso de Senda** → pega la misma clave → **Guardar**. Se pide una sola vez por dispositivo.

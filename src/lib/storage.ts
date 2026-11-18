@@ -10,7 +10,9 @@ export const KEYS = {
   sidebarCollapsed: 'senda_sidebar_collapsed',
   tasksDb: 'senda_tasks_db',
   aiFill: 'senda_ai_fill',
-  notionSectionOpen: 'senda_notion_section_open'
+  notionSectionOpen: 'senda_notion_section_open',
+  synced: 'senda_synced',
+  accessKey: 'senda_access_key'
 } as const;
 
 type Key = (typeof KEYS)[keyof typeof KEYS];

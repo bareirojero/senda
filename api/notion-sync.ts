@@ -1,26 +1,9 @@
 import { Client } from '@notionhq/client';
 import { errorMessage, header, type ApiRequest, type ApiResponse } from './_lib/http.js';
-import { readSession } from './_lib/session.js';
-
-type Source = 'token' | 'oauth' | 'env';
+import { requireAccess, resolveAuth } from './_lib/auth.js';
 
 /** UUID de Notion, con o sin guiones. */
 const BLOCK_ID = /^[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}$/i;
-
-/**
- * Prioridad de credenciales:
- *   1. x-notion-token  (token interno pegado en Personalizar)
- *   2. cookie OAuth    (Conectar con Notion)
- *   3. NOTION_TOKEN    (variable de entorno del despliegue)
- */
-function resolveAuth(req: ApiRequest) {
-  const manual = header(req, 'x-notion-token');
-  if (manual) return { token: manual, source: 'token' as Source, session: null };
-  const session = readSession(req);
-  if (session) return { token: session.accessToken, source: 'oauth' as Source, session };
-  if (process.env.NOTION_TOKEN) return { token: process.env.NOTION_TOKEN, source: 'env' as Source, session: null };
-  return null;
-}
 
 /** En un workspace personal hay una sola persona: es el usuario. Requiere el permiso "Read user information". */
 async function soleWorkspacePerson(notion: Client) {
@@ -103,6 +86,7 @@ async function listDatabases(notion: Client) {
 
 export default async function handler(req: ApiRequest, res: ApiResponse) {
   if (req.method === 'OPTIONS') return res.status(200).end();
+  if (!requireAccess(req, res)) return;
 
   const auth = resolveAuth(req);
   if (!auth) return res.status(401).json({ error: 'Notion no está conectado' });

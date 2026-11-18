@@ -28,8 +28,15 @@ for (const n of state.notes) {
   if (n.topic && n.topic !== 'ai' && !state.topics[n.topic]) state.topics[n.topic] = newTopicMeta(n.topic);
 }
 
+let afterPersist: () => void = () => {};
+/** Se llama tras cada guardado local (la sincronización con Notion se engancha aquí). */
+export function onPersist(fn: () => void): void {
+  afterPersist = fn;
+}
+
 export function persistNotes(): void {
   setJSON(KEYS.notes, state.notes);
+  afterPersist();
 }
 
 export function ensureTopic(key: string, meta?: TopicMeta): TopicMeta {
