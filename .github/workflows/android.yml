@@ -107,6 +107,13 @@ jobs:
       - name: Inicializar proyecto Android
         run: npx tauri android init --ci
 
+      # "android init" deja los íconos de fábrica de Tauri: se reemplazan por los de Senda
+      - name: Íconos de Senda
+        run: |
+          RES=src-tauri/gen/android/app/src/main/res
+          cp -R src-tauri/icons/android/. "$RES/"
+          ls "$RES"/mipmap-xxxhdpi
+
       - name: Compilar (release, arm64 + armv7)
         run: npx tauri android build --apk --target aarch64 --target armv7 --ci
 
