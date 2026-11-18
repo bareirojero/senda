@@ -1,5 +1,5 @@
 import { state } from '../state';
-import { escapeHtml, parseInlineMarkdown } from '../lib/markdown';
+import { escapeHtml, parseBlockMarkdown, parseInlineMarkdown } from '../lib/markdown';
 import type { Note, TopicMeta } from '../types';
 
 function topicMeta(key: string): TopicMeta {
@@ -18,6 +18,8 @@ function visibleNotes(): Note[] {
 }
 
 function contentHtml(note: Note): string {
+  // Las respuestas de IA traen párrafos y listas
+  if (note.isAI) return `<div class="note-content md">${parseBlockMarkdown(note.text)}</div>`;
   const t = parseInlineMarkdown(note.text);
   switch (note.blockType) {
     case 'todo':

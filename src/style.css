@@ -1172,4 +1172,11 @@ aside.right-sidebar.collapsed .topics-list.collapsed { display: block; }
 
 .api-toggle input { margin-top: 2px; accent-color: var(--accent-main); }
 
+/* Respuestas de IA con varias líneas */
+.note-content.md p { margin: 0 0 6px; }
+.note-content.md p:last-child { margin-bottom: 0; }
+.note-content.md .md-heading { font-weight: 600; }
+.note-content.md .md-list { margin: 2px 0 8px; padding-left: 20px; }
+.note-content.md .md-list li { margin: 2px 0; }
+
 .hidden { display: none !important; }
