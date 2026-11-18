@@ -40,6 +40,11 @@ jobs:
           EVENT: ${{ github.event_name }}
         run: |
           URL="${INPUT_URL:-$VAR_URL}"
+          # Si no hay input ni variable, se usa la URL guardada en tauri.conf.json
+          if [ -z "$URL" ]; then
+            URL=$(node -p 'require("./src-tauri/tauri.conf.json").app.windows[0].url')
+            case "$URL" in *SENDA_URL_PENDIENTE*) URL="" ;; esac
+          fi
           if [ -z "$URL" ]; then
             if [ "$EVENT" = "pull_request" ]; then
               echo "::warning::Sin SENDA_URL: se compila solo para validar (no instalar este APK)."
