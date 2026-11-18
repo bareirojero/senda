@@ -1068,7 +1068,7 @@ canvas#neural-canvas:active { cursor: grabbing; }
 .today-group span { font-weight: 700; opacity: 0.7; }
 .today-group.active { background: var(--accent-main); border-color: var(--accent-main); color: #fff; }
 
-.today-list { display: flex; flex-direction: column; max-height: 280px; overflow-y: auto; scrollbar-width: thin; }
+.today-list { display: flex; flex-direction: column; max-height: 360px; overflow-y: auto; scrollbar-width: thin; }
 .today-label {
   font-size: 10.5px;
   font-weight: 700;
@@ -1078,6 +1078,24 @@ canvas#neural-canvas:active { cursor: grabbing; }
   margin: 8px 0 2px;
 }
 .today-label.late { color: var(--pastel-rose-fg); }
+
+/* Grupos desplegables (Vencidas / A futuro) */
+.today-section {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  background: none;
+  border: none;
+  padding: 4px 0;
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+}
+.today-section:hover { color: var(--text-main); }
+.today-section.late:hover { color: var(--pastel-rose-fg); }
+.today-section .side-chevron { width: 12px; height: 12px; }
+.today-section[aria-expanded="true"] .side-chevron { transform: rotate(90deg); }
 
 .today-task { display: flex; gap: 10px; align-items: flex-start; padding: 6px 0; transition: opacity 0.25s; }
 .today-task .checkbox-ui { background: none; cursor: pointer; padding: 0; color: #fff; font-size: 11px; }
@@ -1139,6 +1157,36 @@ canvas#neural-canvas:active { cursor: grabbing; }
 
 .question-card .note-top { display: none; }
 
+/* ───────────── Orden en escritorio: Hoy → caja de escritura → notas ───────────── */
+.content-column > .topic-filter-banner { order: -1; }
+.content-column > .today-panel { order: 0; }
+.content-column > .composer-wrapper { order: 1; }
+.content-column > .notes-feed { order: 2; }
+
+/* Pantallas anchas: Hoy a la izquierda, chat a la derecha */
+@media (min-width: 1240px) {
+  .content-column:has(.today-panel:not(.hidden)) {
+    max-width: 1240px;
+    display: grid;
+    grid-template-columns: minmax(340px, 430px) minmax(0, 1fr);
+    grid-template-rows: auto auto minmax(0, 1fr);
+    column-gap: 28px;
+  }
+  .content-column:has(.today-panel:not(.hidden)) > .today-panel {
+    grid-column: 1;
+    grid-row: 1 / -1;
+    align-self: start;
+    max-height: calc(100% - 24px);
+    overflow-y: auto;
+    margin-bottom: 0;
+    scrollbar-width: thin;
+  }
+  .content-column:has(.today-panel:not(.hidden)) .today-list { max-height: none; overflow: visible; }
+  .content-column:has(.today-panel:not(.hidden)) > .topic-filter-banner { grid-column: 2; grid-row: 1; }
+  .content-column:has(.today-panel:not(.hidden)) > .composer-wrapper { grid-column: 2; grid-row: 2; }
+  .content-column:has(.today-panel:not(.hidden)) > .notes-feed { grid-column: 2; grid-row: 3; min-height: 0; }
+}
+
 /* ───────────── Móvil / Android ───────────── */
 @media (max-width: 720px) {
   body { padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
@@ -1190,7 +1238,7 @@ canvas#neural-canvas:active { cursor: grabbing; }
 
   /* Vista Hoy arriba, fija; el chat debajo */
   .today-panel { order: 0; margin: 10px 0 0; padding: 8px 12px; }
-  .today-list { max-height: 30vh; }
+  .today-list { max-height: 38vh; }
 
   /* Feed arriba, caja de escritura abajo (estilo mensajería).
      column-reverse: lo más nuevo queda abajo y el scroll arranca abajo. */
@@ -1431,4 +1479,11 @@ aside.right-sidebar.collapsed .topics-list.collapsed { display: block; }
   }
   .rail-status.offline { background: var(--text-light); }
   .rail-status.syncing { background: var(--accent-main); animation: typing 1.2s infinite; }
+}
+
+/* Móvil: Hoy arriba, chat en el medio, caja abajo (gana sobre el orden de escritorio) */
+@media (max-width: 720px) {
+  .content-column > .today-panel { order: 0; }
+  .content-column > .notes-feed { order: 1; }
+  .content-column > .composer-wrapper { order: 2; }
 }

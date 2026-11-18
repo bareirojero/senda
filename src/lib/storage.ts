@@ -16,6 +16,8 @@ export const KEYS = {
   todayGroupProp: 'senda_today_group_prop',
   todayGroup: 'senda_today_group',
   todayCollapsed: 'senda_today_collapsed',
+  todayOverdueOpen: 'senda_today_overdue_open',
+  todayFutureOpen: 'senda_today_future_open',
   sessionCache: 'senda_session_cache'
 } as const;
 

@@ -34,6 +34,8 @@ export class TodayPanel {
   private loaded = false;
   private leaving = new Set<string>();
   private query = '';
+  /** Grupos desplegables: vencidas y a futuro (cerrados por defecto) */
+  private open: Record<'overdue' | 'future', boolean> = { overdue: false, future: false };
 
   constructor(
     private readonly el: HTMLElement,
@@ -42,6 +44,7 @@ export class TodayPanel {
   ) {
     this.active = store.get('group');
     this.collapsed = store.get('collapsed') === '1';
+    this.open = { overdue: store.get('overdueOpen') === '1', future: store.get('futureOpen') === '1' };
     el.addEventListener('click', (e) => {
       const t = e.target as HTMLElement;
       const group = t.closest<HTMLElement>('[data-today-group]');
@@ -49,6 +52,13 @@ export class TodayPanel {
         const g = group.dataset.todayGroup!;
         this.active = this.active === g ? '' : g;
         this.store.set('group', this.active);
+        return this.render();
+      }
+      const section = t.closest<HTMLElement>('[data-today-section]');
+      if (section) {
+        const key = section.dataset.todaySection as 'overdue' | 'future';
+        this.open[key] = !this.open[key];
+        this.store.set(key === 'overdue' ? 'overdueOpen' : 'futureOpen', this.open[key] ? '1' : '');
         return this.render();
       }
       if (t.closest('[data-today-toggle]')) {
@@ -105,12 +115,13 @@ export class TodayPanel {
     const inGroup = (t: TaskRow) =>
       (!this.active || (t.selects[this.opts.groupProp] || []).includes(this.active)) &&
       (!this.query || t.title.toLowerCase().includes(this.query));
-    const due = this.tasks.filter((t) => t.date && parseTaskDate(t.date).day <= today);
-    const visible = due.filter(inGroup);
+    const dated = this.tasks.filter((t) => t.date);
+    const visible = dated.filter(inGroup);
     const overdue = visible.filter((t) => parseTaskDate(t.date!).day < today);
     const todays = visible.filter((t) => parseTaskDate(t.date!).day === today);
+    const future = visible.filter((t) => parseTaskDate(t.date!).day > today);
 
-    const count = (g: string) => due.filter((t) => (t.selects[this.opts.groupProp] || []).includes(g)).length;
+    const count = (g: string) => dated.filter((t) => (t.selects[this.opts.groupProp] || []).includes(g)).length;
     const buttons = this.opts.groupOptions.length
       ? `<div class="today-groups">${this.opts.groupOptions
           .map(
@@ -121,10 +132,11 @@ export class TodayPanel {
           .join('')}</div>`
       : '';
 
-    const item = (t: TaskRow, late: boolean) => {
+    const item = (t: TaskRow, when: 'late' | 'today' | 'future') => {
       const { time, day } = parseTaskDate(t.date!);
+      const dd = escapeHtml(day.slice(8, 10) + '/' + day.slice(5, 7));
       const chips = [
-        late ? `<span class="today-chip late">${escapeHtml(day.slice(8, 10) + '/' + day.slice(5, 7))}</span>` : '',
+        when === 'late' ? `<span class="today-chip late">${dd}</span>` : when === 'future' ? `<span class="today-chip">${dd}</span>` : '',
         time ? `<span class="today-chip">${time}</span>` : '',
         ...Object.entries(t.selects)
           .filter(([p]) => p !== this.opts.groupProp)
@@ -146,15 +158,23 @@ export class TodayPanel {
         </div>`;
     };
 
-    const body =
-      overdue.length + todays.length === 0
-        ? `<div class="today-empty">${this.active ? `Nada pendiente en ${escapeHtml(this.active)} para hoy` : 'Nada pendiente para hoy'} ✓</div>`
-        : `${overdue.length ? `<div class="today-label late">Vencidas · ${overdue.length}</div>${overdue.map((t) => item(t, true)).join('')}` : ''}
-           ${todays.length ? `<div class="today-label">Hoy · ${todays.length}</div>${todays.map((t) => item(t, false)).join('')}` : ''}`;
+    // Vencidas y A futuro se despliegan; Hoy siempre a la vista
+    const section = (key: 'overdue' | 'future', label: string, list: TaskRow[], when: 'late' | 'future') =>
+      list.length
+        ? `<button class="today-label today-section ${when === 'late' ? 'late' : ''}" data-today-section="${key}" aria-expanded="${this.open[key]}">
+             <svg class="nav-svg side-chevron" viewBox="0 0 24 24"><polyline points="9 6 15 12 9 18"></polyline></svg>
+             ${label} · ${list.length}
+           </button>
+           ${this.open[key] ? list.map((t) => item(t, when)).join('') : ''}`
+        : '';
+    const todayBlock = todays.length
+      ? `<div class="today-label">Hoy · ${todays.length}</div>${todays.map((t) => item(t, 'today')).join('')}`
+      : `<div class="today-empty">${this.active ? `Nada en ${escapeHtml(this.active)} para hoy` : 'Nada pendiente para hoy'} ✓</div>`;
+    const body = `${section('overdue', 'Vencidas', overdue, 'late')}${todayBlock}${section('future', 'A futuro', future, 'future')}`;
 
     this.el.innerHTML = `
       <button class="today-header" data-today-toggle aria-expanded="${!this.collapsed}">
-        <span class="today-heading">Hoy <span class="today-count">${visible.length}</span></span>
+        <span class="today-heading">Hoy <span class="today-count">${todays.length}</span></span>
         <svg class="nav-svg side-chevron" viewBox="0 0 24 24"><polyline points="9 6 15 12 9 18"></polyline></svg>
       </button>
       ${this.collapsed ? '' : `${buttons}<div class="today-list">${body}</div>`}`;

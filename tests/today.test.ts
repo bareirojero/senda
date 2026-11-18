@@ -27,20 +27,29 @@ function panel() {
 const titles = (el: HTMLElement) => [...el.querySelectorAll('.today-title')].map((a) => a.textContent);
 
 describe('vista Hoy', () => {
-  it('muestra vencidas y de hoy; no las de mañana ni sin fecha', () => {
+  it('a la vista solo las de hoy; Vencidas y A futuro plegadas, con su cantidad', () => {
     const { el } = panel();
-    expect(titles(el)).toEqual(['Vencida de trabajo', 'Hoy de trabajo', 'Hoy personal']);
-    expect(el.querySelector('.today-label.late')?.textContent).toContain('Vencidas · 1');
+    expect(titles(el)).toEqual(['Hoy de trabajo', 'Hoy personal']);
+    const sections = [...el.querySelectorAll<HTMLButtonElement>('[data-today-section]')];
+    expect(sections.map((b) => b.textContent!.replace(/\s+/g, ' ').trim())).toEqual(['Vencidas · 1', 'A futuro · 1']);
+    expect(el.querySelector('.today-count')?.textContent).toBe('2');
+  });
+
+  it('desplegar Vencidas y A futuro (y las tareas sin fecha no aparecen)', () => {
+    const { el } = panel();
+    el.querySelector<HTMLButtonElement>('[data-today-section="overdue"]')!.click();
+    el.querySelector<HTMLButtonElement>('[data-today-section="future"]')!.click();
+    expect(titles(el)).toEqual(['Vencida de trabajo', 'Hoy de trabajo', 'Hoy personal', 'Mañana']);
   });
 
   it('dos botones Trabajo / Personal con su cantidad, y filtran', () => {
     const { el } = panel();
     const buttons = [...el.querySelectorAll<HTMLButtonElement>('.today-group')];
-    expect(buttons.map((b) => b.textContent!.replace(/\s+/g, ' ').trim())).toEqual(['Trabajo 2', 'Personal 1']);
+    expect(buttons.map((b) => b.textContent!.replace(/\s+/g, ' ').trim())).toEqual(['Trabajo 3', 'Personal 1']);
     buttons[1]!.click();
     expect(titles(el)).toEqual(['Hoy personal']);
     el.querySelector<HTMLButtonElement>('[data-today-group="Personal"]')!.click(); // otro toque: todas
-    expect(titles(el)).toHaveLength(3);
+    expect(titles(el)).toHaveLength(2);
   });
 
   it('marcar una tarea avisa para actualizar Notion', () => {

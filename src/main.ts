@@ -58,7 +58,12 @@ const slashMenu = new SlashMenu(el.input, el.slash);
 
 /* ───────────── Vista Hoy ───────────── */
 
-const TODAY_KEYS = { group: KEYS.todayGroup, collapsed: KEYS.todayCollapsed } as const;
+const TODAY_KEYS = {
+  group: KEYS.todayGroup,
+  collapsed: KEYS.todayCollapsed,
+  overdueOpen: KEYS.todayOverdueOpen,
+  futureOpen: KEYS.todayFutureOpen
+} as const;
 const today = new TodayPanel($('today-panel'), (t) => void completeTask(t), {
   get: (k) => getItem(TODAY_KEYS[k as keyof typeof TODAY_KEYS]),
   set: (k, v) => setItem(TODAY_KEYS[k as keyof typeof TODAY_KEYS], v)
