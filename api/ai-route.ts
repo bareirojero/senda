@@ -2,9 +2,10 @@ import { errorMessage, header, type ApiRequest, type ApiResponse } from './_lib/
 
 /**
  * Modelos con respaldo: si uno está saturado (429/5xx) se prueba el siguiente.
- * GEMINI_MODEL / CLAUDE_MODEL fuerzan un modelo concreto (separar varios con comas).
+ * Flash-Lite va primero: en el nivel gratuito permite ~500 solicitudes/día,
+ * frente a ~20/día de 3.8 Flash. GEMINI_MODEL / CLAUDE_MODEL fuerzan otros (separar con comas).
  */
-const GEMINI_MODELS = (process.env.GEMINI_MODEL || 'gemini-3.8-flash,gemini-3.6-flash,gemini-3.5-flash-lite')
+const GEMINI_MODELS = (process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite,gemini-3.8-flash,gemini-3.6-flash')
   .split(',')
   .map((m) => m.trim())
   .filter(Boolean);
@@ -109,13 +110,15 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     return res.status(405).json({ error: 'Método no permitido' });
   }
 
-  const { mode, prompt, availableTopics, recentContext, schema, today } = (req.body || {}) as {
+  const { mode, prompt, availableTopics, recentContext, schema, today, history } = (req.body || {}) as {
     mode?: 'gemini' | 'claude' | 'auto' | 'extract';
     prompt?: string;
     availableTopics?: string[];
     recentContext?: string;
     schema?: unknown;
     today?: string;
+    /** Últimos mensajes del chat de Senda, del más viejo al más nuevo */
+    history?: { role: 'user' | 'assistant'; text: string }[];
   };
   if (!prompt) return res.status(400).json({ error: 'Falta el texto a procesar.' });
 
@@ -124,12 +127,23 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     claude: header(req, 'x-claude-key') || process.env.CLAUDE_API_KEY
   };
 
-  const systemInstruction = `Eres el motor de organización de Senda, un hub minimalista conectado a Notion.
-Temas disponibles del usuario: ${JSON.stringify(availableTopics || [])}.
-Contexto reciente: ${recentContext || 'Ninguno'}.
-Si el modo es "auto", devuelve exclusivamente un JSON válido con:
-{"topic": "clave_del_tema", "blockType": "text|todo|callout|h2", "cleanText": "texto limpio", "relatedTopics": ["tema1"], "summary": "explicación breve en español"}
-Si el modo es "gemini" o "claude", responde en español de forma concisa, estructurada y lista para guardarse en Notion.`;
+  const transcript = (Array.isArray(history) ? history : [])
+    .slice(-12)
+    .map((h) => `${h.role === 'assistant' ? 'Asistente' : 'Usuario'}: ${String(h.text).slice(0, 1500)}`)
+    .join('\n');
+
+  const systemInstruction = `Eres el asistente de Senda, la bandeja de entrada rápida del usuario hacia su Notion.
+El usuario anota ideas, tareas y notas de obra (es ingeniero civil) y a veces te hace preguntas: respóndelas en español, breve y directo, como en un chat.
+Si conviene, sugiere cómo anotarlo en Senda (p. ej. "#tarea mañana 8h …").
+Temas/páginas disponibles: ${JSON.stringify(availableTopics || [])}.
+${transcript ? `Conversación reciente (para contexto):\n${transcript}` : `Contexto reciente: ${recentContext || 'Ninguno'}.`}
+${
+    // El formato JSON SOLO para /auto: si va en el chat normal, el modelo responde JSON crudo
+    mode === 'auto'
+      ? `Devuelve exclusivamente un JSON válido con:
+{"topic": "clave_del_tema", "blockType": "text|todo|callout|h2", "cleanText": "texto limpio", "relatedTopics": ["tema1"], "summary": "explicación breve en español"}`
+      : 'Responde en texto natural (puedes usar listas con guiones). Nunca respondas con JSON ni bloques de código salvo que te lo pidan.'
+  }`;
 
   try {
     // extract: completar propiedades de una base de Notion a partir del texto

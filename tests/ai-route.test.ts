@@ -32,8 +32,8 @@ describe('ai-route con respaldo de modelos', () => {
     const res = await call({ mode: 'gemini', prompt: 'hola' }, { 'x-gemini-key': 'AIza-test' });
     expect(res.statusCode).toBe(200);
     expect(res.body).toEqual({ model: 'Gemini', text: 'hola desde el respaldo' });
-    expect(fetchMock.mock.calls[0]![0]).toContain('gemini-3.8-flash');
-    expect(fetchMock.mock.calls[1]![0]).toContain('gemini-3.6-flash');
+    expect(fetchMock.mock.calls[0]![0]).toContain('gemini-3.5-flash-lite');
+    expect(fetchMock.mock.calls[1]![0]).toContain('gemini-3.8-flash');
   });
 
   it('si todo Gemini está caído y hay llave de Claude, responde Claude (respaldo)', async () => {
@@ -65,5 +65,37 @@ describe('ai-route con respaldo de modelos', () => {
     const res = await call({ mode: 'claude', prompt: 'hola' });
     expect(res.statusCode).toBe(401);
     expect(res.body).toMatchObject({ code: 'missing_key', error: 'Falta configurar CLAUDE_API_KEY' });
+  });
+});
+
+describe('instrucciones según el modo', () => {
+  it('el formato JSON de /auto no se filtra a /gemini', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(geminiText('respuesta'));
+    vi.stubGlobal('fetch', fetchMock);
+    await call({ mode: 'gemini', prompt: 'hola' }, { 'x-gemini-key': 'AIza' });
+    const body = JSON.parse(fetchMock.mock.calls[0]![1].body);
+    const system = body.systemInstruction.parts[0].text as string;
+    expect(system).not.toContain('"blockType"');
+    expect(system).toContain('Nunca respondas con JSON');
+  });
+
+  it('/auto sí pide JSON', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(geminiText('{"topic":"obras"}'));
+    vi.stubGlobal('fetch', fetchMock);
+    const res = await call({ mode: 'auto', prompt: 'nota' }, { 'x-gemini-key': 'AIza' });
+    expect(JSON.parse(fetchMock.mock.calls[0]![1].body).systemInstruction.parts[0].text).toContain('"blockType"');
+    expect(res.body).toEqual({ model: 'Gemini Auto', parsed: { topic: 'obras' } });
+  });
+
+  it('incluye la conversación reciente como contexto', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(geminiText('ok'));
+    vi.stubGlobal('fetch', fetchMock);
+    await call(
+      { mode: 'gemini', prompt: '¿y para el jueves?', history: [{ role: 'user', text: 'qué tengo mañana?' }, { role: 'assistant', text: 'Recibir H-30' }] },
+      { 'x-gemini-key': 'AIza' }
+    );
+    const system = JSON.parse(fetchMock.mock.calls[0]![1].body).systemInstruction.parts[0].text as string;
+    expect(system).toContain('Usuario: qué tengo mañana?');
+    expect(system).toContain('Asistente: Recibir H-30');
   });
 });
