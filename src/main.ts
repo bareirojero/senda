@@ -7,9 +7,9 @@ import { VoiceInput } from './ui/voice';
 import { slugify } from './data/seed';
 import { extractRow, norm, schemaForAi, tagFor, toNotionDate, type AiExtraction } from './lib/extract';
 import { DEFAULT_TOPIC } from './data/seed';
-import { parseInputToNotion } from './lib/parser';
+import { buildRichText, parseInputToNotion } from './lib/parser';
 import { KEYS, getItem, getJSON, setItem, setJSON } from './lib/storage';
-import { accessKeyRequired, lastFailureRetryable, aiRoute, appendBlocks, createRow, fetchTasks, deleteBlocks, fetchNotionSession, logoutNotion, setTodoChecked, OAUTH_LOGIN_URL } from './lib/api';
+import { accessKeyRequired, lastFailureRetryable, updateInNotion, aiRoute, appendBlocks, createRow, fetchTasks, deleteBlocks, fetchNotionSession, logoutNotion, setTodoChecked, OAUTH_LOGIN_URL } from './lib/api';
 import { SlashMenu } from './ui/slash-menu';
 import { renderNotes, renderSidebarTopics } from './ui/feed';
 import { initGraph, stopGraph } from './ui/graph';
@@ -256,6 +256,83 @@ async function deleteNote(id: number): Promise<void> {
   const ids = note.notionBlockIds || [];
   if (!session || ids.length === 0) return;
   await withStatus(() => deleteBlocks(ids), 'Notion • Error al borrar');
+}
+
+/* ───────────── Editar notas ───────────── */
+
+const NOTION_TYPE: Record<string, string> = {
+  text: 'paragraph', todo: 'to_do', h1: 'heading_1', h2: 'heading_2', h3: 'heading_3', bullet: 'bulleted_list_item',
+  num: 'numbered_list_item', toggle: 'toggle', quote: 'quote', callout: 'callout', latex: 'equation', code: 'code'
+};
+
+function startEdit(id: number): void {
+  state.editingId = id;
+  render();
+  const ta = el.feed.querySelector<HTMLTextAreaElement>(`[data-edit-input="${id}"]`);
+  if (!ta) return;
+  ta.style.height = 'auto';
+  ta.style.height = `${ta.scrollHeight}px`;
+  ta.focus();
+  ta.setSelectionRange(ta.value.length, ta.value.length);
+}
+
+function cancelEdit(): void {
+  state.editingId = null;
+  render();
+}
+
+/** Chips: los nuevos reemplazan a los del mismo tipo (fecha) y se suman al resto. */
+function mergeChips(old: string[] = [], fresh: string[]): string[] {
+  const hasDate = fresh.some((c) => c.startsWith('📅'));
+  const kept = old.filter((c) => !(hasDate && c.startsWith('📅')) && !fresh.includes(c));
+  return [...fresh.filter((c) => c.startsWith('📅')), ...kept, ...fresh.filter((c) => !c.startsWith('📅'))];
+}
+
+async function saveEdit(id: number): Promise<void> {
+  const ta = el.feed.querySelector<HTMLTextAreaElement>(`[data-edit-input="${id}"]`);
+  const note = state.notes.find((n) => n.id === id);
+  const value = ta?.value.trim() || '';
+  state.editingId = null;
+  if (!note || !value) return render();
+
+  const blockId = note.notionBlockIds?.[0];
+  const dbId = state.topics[note.topic]?.databaseId;
+  const db = dbId ? session?.databases?.find((d) => d.id === dbId) : undefined;
+  let change: Parameters<typeof updateInNotion>[1] | null = null;
+
+  if (db && (note.notionDoneProp || note.dest === db.title)) {
+    // Fila de base: título + lo que se pueda deducir del texto nuevo (fecha, #etiquetas, obra)
+    const row = extractRow(plain(value), db, new Date());
+    note.text = row.title;
+    note.chips = mergeChips(note.chips, row.chips);
+    change = { properties: row.properties };
+    if (note.outbox?.kind === 'row') note.outbox.properties = { ...note.outbox.properties, ...row.properties };
+  } else {
+    if (note.blockType === 'code') note.code = value;
+    else note.text = value;
+    const type = NOTION_TYPE[note.blockType || 'text'];
+    if (type) {
+      const payload: Record<string, unknown> =
+        type === 'equation' ? { expression: value }
+        : type === 'code' ? { rich_text: [{ type: 'text', text: { content: value } }], language: 'plain text' }
+        : type === 'to_do' ? { rich_text: buildRichText(value), checked: !!note.done }
+        : { rich_text: buildRichText(value) };
+      change = { block: { type, payload } };
+      if (note.outbox?.kind === 'blocks') note.outbox.blocks[0] = { object: 'block', type, [type]: payload };
+    }
+  }
+  persistNotes();
+  render();
+
+  // Solo si ya está en Notion (si está "En espera", se envía la versión editada)
+  if (!session || !blockId || !change || note.status !== 'sent') return;
+  note.status = 'sending';
+  render();
+  const ok = await withStatus(() => updateInNotion(blockId, change!), 'Notion • Error al guardar');
+  note.status = ok ? 'sent' : 'error';
+  persistNotes();
+  render();
+  if (ok && db && db.id === tasksDbId()) void refreshTasks();
 }
 
 /** Primer toque: el botón pide confirmación; segundo toque (en 3 s): borra. */
@@ -908,6 +985,14 @@ document.addEventListener('click', (e) => {
   const del = target.closest<HTMLElement>('[data-delete-id]');
   if (del) return handleDeleteClick(del);
 
+  const editBtn = target.closest<HTMLElement>('[data-edit-id]');
+  if (editBtn) return startEdit(Number(editBtn.dataset.editId));
+  const save = target.closest<HTMLElement>('[data-edit-save]');
+  if (save) return void saveEdit(Number(save.dataset.editSave));
+  const cancel = target.closest<HTMLElement>('[data-edit-cancel]');
+  if (cancel) return cancelEdit();
+  if (target.closest('.note-editor')) return;
+
   const task = target.closest<HTMLElement>('[data-task-id]');
   if (task) return void toggleTask(Number(task.dataset.taskId));
 
@@ -964,6 +1049,25 @@ new VoiceInput(
     el.input.dispatchEvent(new Event('input'));
   }
 );
+
+// En el editor: Enter guarda, Shift+Enter salto de línea, Esc cancela
+document.addEventListener('keydown', (e) => {
+  const t = e.target as HTMLElement;
+  if (!t.matches?.('.note-edit')) return;
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+    e.preventDefault();
+    void saveEdit(Number((t as HTMLTextAreaElement).dataset.editInput));
+  } else if (e.key === 'Escape') {
+    e.preventDefault();
+    cancelEdit();
+  }
+});
+document.addEventListener('input', (e) => {
+  const t = e.target as HTMLTextAreaElement;
+  if (!t.matches?.('.note-edit')) return;
+  t.style.height = 'auto';
+  t.style.height = `${t.scrollHeight}px`;
+});
 
 /* ───────────── Arranque ───────────── */
 
