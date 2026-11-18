@@ -1,5 +1,6 @@
 import './style.css';
-import { state, persistNotes, ensureTopic } from './state';
+import { state, persistNotes, ensureTopic, syncTopicsFromPages } from './state';
+import { DEFAULT_TOPIC } from './data/seed';
 import { parseInputToNotion } from './lib/parser';
 import { KEYS, getItem, setItem } from './lib/storage';
 import { aiRoute, appendBlocks, fetchNotionSession, logoutNotion, OAUTH_LOGIN_URL } from './lib/api';
@@ -112,14 +113,16 @@ function pulseSync(): void {
 }
 
 /** Envía bloques a Notion mostrando el estado real de la petición en la píldora. */
-async function pushBlocks(blocks: Parameters<typeof appendBlocks>[0]): Promise<void> {
+async function pushBlocks(blocks: Parameters<typeof appendBlocks>[0], topic?: string): Promise<void> {
   if (!session || blocks.length === 0) {
     pulseSync();
     return;
   }
   el.avatar.classList.add('syncing');
   el.wsStatus.textContent = 'Sincronizando...';
-  const ok = await appendBlocks(blocks, getItem(KEYS.notionPage));
+  // @tema de una página de Notion → esa página; si no, la página destino configurada
+  const pageId = (topic && state.topics[topic]?.pageId) || getItem(KEYS.notionPage);
+  const ok = await appendBlocks(blocks, pageId);
   el.avatar.classList.remove('syncing');
   el.wsStatus.textContent = ok ? STATUS_OK : 'Notion • Error al enviar';
   if (!ok) setTimeout(() => (el.wsStatus.textContent = idleStatus()), 2500);
@@ -142,6 +145,8 @@ async function loadSession(): Promise<void> {
   if (session) {
     el.userName.textContent = session.user.name;
     el.avatar.textContent = initials(session.user.name);
+    syncTopicsFromPages(session.pages);
+    render();
   }
   el.wsStatus.textContent = idleStatus();
   el.avatar.classList.toggle('offline', !session);
@@ -258,7 +263,7 @@ async function submitInput(): Promise<void> {
     return;
   }
 
-  const parsed = parseInputToNotion(raw, state.activeTopic || 'estructura');
+  const parsed = parseInputToNotion(raw, state.activeTopic || DEFAULT_TOPIC);
   ensureTopic(parsed.topic);
 
   state.notes.unshift({
@@ -269,16 +274,16 @@ async function submitInput(): Promise<void> {
     done: false,
     text: parsed.cleanText || 'Nuevo bloque en Notion',
     code: parsed.codeBlock ?? null,
-    links: parsed.topic === 'estructura' ? ['tesis-hle'] : ['estructura']
+    links: []
   });
   persistNotes();
   render();
-  void pushBlocks(parsed.notionBlocks);
+  void pushBlocks(parsed.notionBlocks, parsed.topic);
 }
 
 async function submitAi(mode: 'gemini' | 'claude' | 'auto', query: string, raw: string): Promise<void> {
   const model = mode === 'claude' ? 'Claude' : 'Gemini';
-  state.notes.unshift({ id: Date.now(), time: 'Ahora', topic: state.activeTopic || 'estructura', blockType: 'text', text: query || raw, links: [] });
+  state.notes.unshift({ id: Date.now(), time: 'Ahora', topic: state.activeTopic || DEFAULT_TOPIC, blockType: 'text', text: query || raw, links: [] });
   persistNotes();
   render();
 
@@ -295,7 +300,7 @@ async function submitAi(mode: 'gemini' | 'claude' | 'auto', query: string, raw: 
     text: data
       ? data.text || data.parsed?.summary || 'Procesado en Notion.'
       : `No pude contactar a ${model}. Revisa las llaves en **Personalizar** o las variables de entorno.`,
-    links: data ? data.parsed?.relatedTopics || ['estructura'] : []
+    links: (data?.parsed?.relatedTopics || []).filter((t) => state.topics[t])
   });
   persistNotes();
   pulseSync();
