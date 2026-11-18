@@ -63,7 +63,12 @@ function cardHtml(note: Note): string {
   return `
     <div class="note-top">
       <div class="note-badges">${badge}</div>
-      <span class="badge-time">${escapeHtml(note.time)}</span>
+      <div class="note-meta">
+        <span class="badge-time">${escapeHtml(note.time)}</span>
+        <button class="note-delete" data-delete-id="${note.id}" title="Borrar" aria-label="Borrar">
+          <svg class="nav-svg" viewBox="0 0 24 24"><path d="M3 6h18"></path><path d="M8 6V4h8v2"></path><path d="M19 6l-1 14H6L5 6"></path></svg>
+        </button>
+      </div>
     </div>
     ${contentHtml(note)}
     ${code}

@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Senda no usa APIs nativas de Tauri: solo carga la app web.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

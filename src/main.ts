@@ -3,7 +3,7 @@ import { state, persistNotes, ensureTopic, syncTopicsFromPages } from './state';
 import { DEFAULT_TOPIC } from './data/seed';
 import { parseInputToNotion } from './lib/parser';
 import { KEYS, getItem, setItem } from './lib/storage';
-import { aiRoute, appendBlocks, fetchNotionSession, logoutNotion, OAUTH_LOGIN_URL } from './lib/api';
+import { aiRoute, appendBlocks, deleteBlocks, fetchNotionSession, logoutNotion, setTodoChecked, OAUTH_LOGIN_URL } from './lib/api';
 import { SlashMenu } from './ui/slash-menu';
 import { renderNotes, renderSidebarTopics } from './ui/feed';
 import { initGraph, stopGraph } from './ui/graph';
@@ -85,13 +85,42 @@ function selectTopic(key: string): void {
   render();
 }
 
-function toggleTask(id: number): void {
+async function toggleTask(id: number): Promise<void> {
   const note = state.notes.find((n) => n.id === id);
   if (!note) return;
   note.done = !note.done;
   persistNotes();
-  pulseSync();
   render();
+  const blockId = note.notionBlockIds?.[0];
+  if (!session || !blockId) return pulseSync();
+  await withStatus(() => setTodoChecked(blockId, !!note.done), 'Notion • Error al marcar');
+}
+
+/** Borra una nota de Senda y, si se envió a Notion, también sus bloques allí. */
+async function deleteNote(id: number): Promise<void> {
+  const note = state.notes.find((n) => n.id === id);
+  if (!note) return;
+  state.notes = state.notes.filter((n) => n.id !== id);
+  persistNotes();
+  render();
+  const ids = note.notionBlockIds || [];
+  if (!session || ids.length === 0) return;
+  await withStatus(() => deleteBlocks(ids), 'Notion • Error al borrar');
+}
+
+/** Primer toque: el botón pide confirmación; segundo toque (en 3 s): borra. */
+function handleDeleteClick(btn: HTMLElement): void {
+  if (btn.classList.contains('confirm')) {
+    void deleteNote(Number(btn.dataset.deleteId));
+    return;
+  }
+  document.querySelectorAll('.note-delete.confirm').forEach((b) => b.classList.remove('confirm'));
+  btn.classList.add('confirm');
+  btn.title = 'Toca otra vez para borrar';
+  setTimeout(() => {
+    btn.classList.remove('confirm');
+    btn.title = 'Borrar';
+  }, 3000);
 }
 
 /* ───────────── Indicador de sincronización ───────────── */
@@ -112,20 +141,32 @@ function pulseSync(): void {
   }, 650);
 }
 
-/** Envía bloques a Notion mostrando el estado real de la petición en la píldora. */
-async function pushBlocks(blocks: Parameters<typeof appendBlocks>[0], topic?: string): Promise<void> {
+/** Ejecuta una operación contra Notion mostrando su estado real en la píldora. */
+async function withStatus<T>(op: () => Promise<T>, errorText: string): Promise<T> {
+  el.avatar.classList.add('syncing');
+  el.wsStatus.textContent = 'Sincronizando...';
+  const result = await op();
+  el.avatar.classList.remove('syncing');
+  const ok = Array.isArray(result) || result === true;
+  el.wsStatus.textContent = ok ? STATUS_OK : errorText;
+  if (!ok) setTimeout(() => (el.wsStatus.textContent = idleStatus()), 2500);
+  return result;
+}
+
+/** Envía bloques a Notion y guarda en la nota los IDs creados. */
+async function pushBlocks(noteId: number, blocks: Parameters<typeof appendBlocks>[0], topic?: string): Promise<void> {
   if (!session || blocks.length === 0) {
     pulseSync();
     return;
   }
-  el.avatar.classList.add('syncing');
-  el.wsStatus.textContent = 'Sincronizando...';
   // @tema de una página de Notion → esa página; si no, la página destino configurada
   const pageId = (topic && state.topics[topic]?.pageId) || getItem(KEYS.notionPage);
-  const ok = await appendBlocks(blocks, pageId);
-  el.avatar.classList.remove('syncing');
-  el.wsStatus.textContent = ok ? STATUS_OK : 'Notion • Error al enviar';
-  if (!ok) setTimeout(() => (el.wsStatus.textContent = idleStatus()), 2500);
+  const ids = await withStatus(() => appendBlocks(blocks, pageId), 'Notion • Error al enviar');
+  const note = state.notes.find((n) => n.id === noteId);
+  if (ids && note) {
+    note.notionBlockIds = ids;
+    persistNotes();
+  }
 }
 
 function initials(name: string): string {
@@ -226,17 +267,13 @@ async function submitInput(): Promise<void> {
   slashMenu.close();
 
   if (raw === '/eliminar') {
-    if (state.notes.length > 0) {
-      state.notes.shift();
-      persistNotes();
-      render();
-    }
+    if (state.notes.length > 0) await deleteNote(state.notes[0]!.id);
     return;
   }
 
   if (raw === '/duplicar') {
     if (state.notes.length > 0) {
-      state.notes.unshift({ ...state.notes[0]!, id: Date.now(), time: 'Ahora (copia)' });
+      state.notes.unshift({ ...state.notes[0]!, id: Date.now(), time: 'Ahora (copia)', notionBlockIds: undefined });
       persistNotes();
       pulseSync();
       render();
@@ -266,8 +303,9 @@ async function submitInput(): Promise<void> {
   const parsed = parseInputToNotion(raw, state.activeTopic || DEFAULT_TOPIC);
   ensureTopic(parsed.topic);
 
+  const noteId = Date.now();
   state.notes.unshift({
-    id: Date.now(),
+    id: noteId,
     time: 'Ahora',
     topic: parsed.topic,
     blockType: parsed.blockType,
@@ -278,7 +316,7 @@ async function submitInput(): Promise<void> {
   });
   persistNotes();
   render();
-  void pushBlocks(parsed.notionBlocks, parsed.topic);
+  void pushBlocks(noteId, parsed.notionBlocks, parsed.topic);
 }
 
 async function submitAi(mode: 'gemini' | 'claude' | 'auto', query: string, raw: string): Promise<void> {
@@ -328,6 +366,18 @@ function setSidebarCollapsed(collapsed: boolean): void {
     : '<polyline points="13 17 18 12 13 7"></polyline><polyline points="6 17 11 12 6 7"></polyline>';
   setItem(KEYS.sidebarCollapsed, collapsed ? '1' : '');
 }
+
+/* ───────────── Cajón lateral (móvil) ───────────── */
+
+function setDrawer(open: boolean): void {
+  document.body.classList.toggle('drawer-open', open);
+}
+
+$('btn-mobile-menu').addEventListener('click', (e) => {
+  e.stopPropagation();
+  setDrawer(!document.body.classList.contains('drawer-open'));
+});
+$('drawer-backdrop').addEventListener('click', () => setDrawer(false));
 
 /* ───────────── Eventos ───────────── */
 
@@ -380,14 +430,23 @@ document.addEventListener('click', (e) => {
   el.infoPopover.classList.remove('open');
   const target = e.target as HTMLElement;
 
+  const del = target.closest<HTMLElement>('[data-delete-id]');
+  if (del) return handleDeleteClick(del);
+
   const task = target.closest<HTMLElement>('[data-task-id]');
-  if (task) return toggleTask(Number(task.dataset.taskId));
+  if (task) return void toggleTask(Number(task.dataset.taskId));
 
   const topic = target.closest<HTMLElement>('[data-topic]');
-  if (topic?.dataset.topic) return selectTopic(topic.dataset.topic);
+  if (topic?.dataset.topic) {
+    setDrawer(false);
+    return selectTopic(topic.dataset.topic);
+  }
 
   const view = target.closest<HTMLElement>('[data-view]');
-  if (view?.dataset.view) return setView(view.dataset.view as View);
+  if (view?.dataset.view) {
+    setDrawer(false);
+    return setView(view.dataset.view as View);
+  }
 
   const theme = target.closest<HTMLElement>('[data-theme-choice]');
   if (theme?.dataset.themeChoice) return changeTheme(theme.dataset.themeChoice);
