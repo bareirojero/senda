@@ -33,6 +33,74 @@ async function soleWorkspacePerson(notion: Client) {
   }
 }
 
+function plainTitle(prop: any): string {
+  return (prop?.title || []).map((t: any) => t.plain_text).join('').trim();
+}
+
+function plainText(prop: any): string {
+  return (prop?.rich_text || []).map((t: any) => t.plain_text).join('').trim();
+}
+
+/** Columnas de texto que sirven para reconocer una fila (p. ej. "Palabras clave", "Código"). */
+const KEYWORD_PROP = /palabra|clave|keyword|alias|c[oó]digo|code|sigla/i;
+
+/** Filas de una base relacionada (p. ej. Obras) con sus palabras clave, para enlazar por texto. */
+async function relationTargets(notion: Client, databaseId: string) {
+  const rows: { id: string; title: string; keywords: string[] }[] = [];
+  let cursor: string | undefined;
+  do {
+    const r: any = await notion.databases.query({ database_id: databaseId, page_size: 100, start_cursor: cursor });
+    for (const page of r.results) {
+      const props = Object.entries(page.properties || {}) as [string, any][];
+      const title = plainTitle(props.find(([, p]) => p.type === 'title')?.[1]);
+      if (!title) continue;
+      const keywords = props
+        .filter(([name, p]) => p.type === 'rich_text' && KEYWORD_PROP.test(name))
+        .flatMap(([, p]) => plainText(p).split(/[,;\n]/))
+        .map((k) => k.trim())
+        .filter(Boolean);
+      rows.push({ id: page.id, title, keywords });
+    }
+    cursor = r.has_more ? r.next_cursor : undefined;
+  } while (cursor && rows.length < 300);
+  return rows;
+}
+
+/** Bases compartidas con la integración y su esquema (lo que Senda puede completar). */
+async function listDatabases(notion: Client) {
+  const search: any = await notion.search({
+    filter: { property: 'object', value: 'database' } as any,
+    sort: { direction: 'descending', timestamp: 'last_edited_time' },
+    page_size: 15
+  });
+  const targetsCache = new Map<string, Promise<{ id: string; title: string; keywords: string[] }[]>>();
+
+  return Promise.all(
+    search.results.map(async (db: any) => {
+      const entries = Object.entries(db.properties || {}) as [string, any][];
+      const properties = await Promise.all(
+        entries.map(async ([name, p]) => {
+          const base: { name: string; type: string; options?: string[]; targets?: unknown[] } = { name, type: p.type };
+          if (p.type === 'select' || p.type === 'multi_select' || p.type === 'status') {
+            base.options = (p[p.type]?.options || []).map((o: any) => o.name);
+          }
+          if (p.type === 'relation' && p.relation?.database_id) {
+            const target = p.relation.database_id as string;
+            if (!targetsCache.has(target)) targetsCache.set(target, relationTargets(notion, target).catch(() => []));
+            base.targets = await targetsCache.get(target)!;
+          }
+          return base;
+        })
+      );
+      return {
+        id: db.id as string,
+        title: (db.title || []).map((t: any) => t.plain_text).join('').trim() || 'Base sin título',
+        properties
+      };
+    })
+  );
+}
+
 export default async function handler(req: ApiRequest, res: ApiResponse) {
   if (req.method === 'OPTIONS') return res.status(200).end();
 
@@ -52,7 +120,8 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         page_size: 25
       });
 
-      const pages = search.results.map((p: any) => {
+      // Las filas de bases (p. ej. cada tarea) también son páginas: se excluyen de la lista
+      const pages = search.results.filter((p: any) => p.parent?.type !== 'database_id').map((p: any) => {
         const titleProp = Object.values(p.properties || {}).find((prop: any) => prop.type === 'title') as any;
         const title = titleProp?.title?.map((t: any) => t.plain_text).join('') || 'Sin título';
         return { id: p.id as string, title };
@@ -67,8 +136,11 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       const name = process.env.NOTION_USER_NAME || person?.name || me?.bot?.workspace_name || me?.name || 'Usuario Notion';
       const avatar = person?.avatar_url || null;
 
+      const databases = await listDatabases(notion).catch(() => []);
+
       return res.status(200).json({
         source: auth.source,
+        databases,
         user: { name, avatar },
         workspace: auth.session?.workspaceName || me?.bot?.workspace_name || null,
         pages
@@ -78,10 +150,28 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     }
   }
 
-  // POST: añadir bloques formateados a la página destino
+  // POST: crear una fila en una base ({ databaseId, properties }) o añadir bloques a una página
   if (req.method === 'POST') {
     try {
-      const { targetPageId, blocks } = (req.body || {}) as { targetPageId?: string; blocks?: unknown[] };
+      const { targetPageId, blocks, databaseId, properties } = (req.body || {}) as {
+        targetPageId?: string;
+        blocks?: unknown[];
+        databaseId?: string;
+        properties?: Record<string, unknown>;
+      };
+
+      if (databaseId) {
+        if (!BLOCK_ID.test(databaseId) || !properties || typeof properties !== 'object') {
+          return res.status(400).json({ error: 'databaseId o properties inválidos.' });
+        }
+        const page: any = await notion.pages.create({
+          parent: { database_id: databaseId },
+          properties: properties as any,
+          ...(Array.isArray(blocks) && blocks.length ? { children: blocks.slice(0, 100) as any } : {})
+        });
+        return res.status(200).json({ ok: true, results: [{ id: page.id, url: page.url }] });
+      }
+
       const destination = targetPageId || defaultPageId;
 
       if (!destination) return res.status(400).json({ error: 'No se especificó página destino en Notion.' });
@@ -102,9 +192,14 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   // PATCH: marcar / desmarcar una tarea
   if (req.method === 'PATCH') {
     try {
-      const { blockId, checked } = (req.body || {}) as { blockId?: string; checked?: boolean };
+      const { blockId, checked, property } = (req.body || {}) as { blockId?: string; checked?: boolean; property?: string };
       if (!blockId || !BLOCK_ID.test(blockId)) return res.status(400).json({ error: 'blockId inválido.' });
-      await notion.blocks.update({ block_id: blockId, to_do: { checked: !!checked } } as any);
+      if (property) {
+        // Fila de una base: la casilla es una propiedad (p. ej. "Hecho")
+        await notion.pages.update({ page_id: blockId, properties: { [property]: { checkbox: !!checked } } as any });
+      } else {
+        await notion.blocks.update({ block_id: blockId, to_do: { checked: !!checked } } as any);
+      }
       return res.status(200).json({ ok: true });
     } catch (err) {
       return res.status(500).json({ error: errorMessage(err) });

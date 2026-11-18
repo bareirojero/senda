@@ -60,6 +60,10 @@ function cardHtml(note: Note): string {
        </div>`
     : '';
 
+  const chips = note.chips?.length
+    ? `<div class="note-chips">${note.chips.map((c) => `<span class="note-chip">${escapeHtml(c)}</span>`).join('')}</div>`
+    : '';
+
   return `
     <div class="note-top">
       <div class="note-badges">${badge}</div>
@@ -71,6 +75,7 @@ function cardHtml(note: Note): string {
       </div>
     </div>
     ${contentHtml(note)}
+    ${chips}
     ${code}
     ${links}`;
 }
@@ -97,13 +102,17 @@ export function renderNotes(feed: HTMLElement): void {
   feed.replaceChildren(frag);
 }
 
-export function renderSidebarTopics(container: HTMLElement, totalCount: HTMLElement): void {
+export function renderSidebarTopics(container: HTMLElement, totalCount: HTMLElement): number {
   totalCount.textContent = String(state.notes.length);
   const frag = document.createDocumentFragment();
-  for (const [key, meta] of Object.entries(state.topics)) {
+  // Bases primero (son los destinos más útiles), luego páginas y temas locales
+  const entries = Object.entries(state.topics).sort(([, a], [, b]) => Number(!!b.databaseId) - Number(!!a.databaseId));
+  let shown = 0;
+  for (const [key, meta] of entries) {
     const count = state.notes.filter((n) => n.topic === key).length;
-    // Solo páginas reales de Notion o temas que ya tienen notas
-    if (!meta.pageId && count === 0) continue;
+    // Solo páginas/bases reales de Notion o temas que ya tienen notas
+    if (!meta.pageId && !meta.databaseId && count === 0) continue;
+    shown++;
     const selected = state.activeView === 'topic' && state.activeTopic === key;
     const el = document.createElement('div');
     el.className = `side-link ${selected ? 'active' : ''}`;
@@ -112,10 +121,11 @@ export function renderSidebarTopics(container: HTMLElement, totalCount: HTMLElem
     el.innerHTML = `
       <span class="side-link-left">
         <span class="topic-dot" style="background:${meta.dot}"></span>
-        <span class="side-text">${escapeHtml(meta.label)}</span>
+        <span class="side-text">${escapeHtml(meta.label)}${meta.databaseId ? ' <span class="db-mark">DB</span>' : ''}</span>
       </span>
       <span class="side-count">${count}</span>`;
     frag.appendChild(el);
   }
   container.replaceChildren(frag);
+  return shown;
 }

@@ -56,13 +56,13 @@ export async function deleteBlocks(ids: string[]): Promise<boolean> {
 }
 
 /** Marca o desmarca una casilla de tarea en Notion. */
-export async function setTodoChecked(blockId: string, checked: boolean): Promise<boolean> {
+export async function setTodoChecked(blockId: string, checked: boolean, property?: string): Promise<boolean> {
   try {
     const res = await fetch('/api/notion-sync', {
       method: 'PATCH',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json', ...notionHeaders() },
-      body: JSON.stringify({ blockId, checked })
+      body: JSON.stringify({ blockId, checked, property })
     });
     return res.ok;
   } catch {
@@ -73,10 +73,17 @@ export async function setTodoChecked(blockId: string, checked: boolean): Promise
 export interface AiResponse {
   model?: string;
   text?: string;
+  /** Motivo del fallo devuelto por el servidor (sin llave, cuota, modelo…) */
+  error?: string;
   parsed?: { topic?: string; blockType?: string; cleanText?: string; relatedTopics?: string[]; summary?: string };
 }
 
-export async function aiRoute(mode: 'gemini' | 'claude' | 'auto', prompt: string, availableTopics: string[]): Promise<AiResponse | null> {
+export async function aiRoute(
+  mode: 'gemini' | 'claude' | 'auto' | 'extract',
+  prompt: string,
+  availableTopics: string[],
+  extra: Record<string, unknown> = {}
+): Promise<AiResponse> {
   try {
     const res = await fetch('/api/ai-route', {
       method: 'POST',
@@ -85,10 +92,28 @@ export async function aiRoute(mode: 'gemini' | 'claude' | 'auto', prompt: string
         'x-gemini-key': getItem(KEYS.gemini),
         'x-claude-key': getItem(KEYS.claude)
       },
-      body: JSON.stringify({ mode, prompt, availableTopics })
+      body: JSON.stringify({ mode, prompt, availableTopics, ...extra })
+    });
+    const data = (await res.json().catch(() => ({}))) as AiResponse;
+    if (!res.ok) return { error: data.error || `El servidor respondió ${res.status}` };
+    return data;
+  } catch {
+    return { error: 'Sin conexión con el servidor' };
+  }
+}
+
+/** Crea una fila en una base de Notion. Devuelve el ID de la página creada, o null. */
+export async function createRow(databaseId: string, properties: Record<string, unknown>): Promise<string[] | null> {
+  try {
+    const res = await fetch('/api/notion-sync', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json', ...notionHeaders() },
+      body: JSON.stringify({ databaseId, properties })
     });
     if (!res.ok) return null;
-    return (await res.json()) as AiResponse;
+    const data = (await res.json()) as { results?: { id: string }[] };
+    return (data.results || []).map((r) => r.id);
   } catch {
     return null;
   }
