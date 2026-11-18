@@ -169,9 +169,12 @@ async function pushBlocks(noteId: number, blocks: Parameters<typeof appendBlocks
   const pageId = (topic && state.topics[topic]?.pageId) || getItem(KEYS.notionPage);
   const ids = await withStatus(() => appendBlocks(blocks, pageId), 'Notion • Error al enviar');
   const note = state.notes.find((n) => n.id === noteId);
-  if (ids && note) {
-    note.notionBlockIds = ids;
+  if (note) {
+    if (ids) note.notionBlockIds = ids;
+    note.status = ids ? 'sent' : 'error';
+    note.dest = (topic && state.topics[topic]?.pageId && state.topics[topic]?.label) || session?.pages.find((p) => p.id === pageId)?.title || 'Página destino';
     persistNotes();
+    render();
   }
 }
 
@@ -283,6 +286,7 @@ async function submitInput(): Promise<void> {
   const raw = el.input.value.trim();
   if (!raw) return;
   el.input.value = '';
+  autosize();
   slashMenu.close();
 
   if (raw === '/eliminar') {
@@ -321,6 +325,12 @@ async function submitInput(): Promise<void> {
 
   const parsed = parseInputToNotion(raw, state.activeTopic || DEFAULT_TOPIC);
 
+  // Chat: una pregunta (texto con "?") va al asistente, no a Notion
+  if (parsed.blockType === 'text' && !raw.startsWith('/') && raw.includes('?')) {
+    await submitAi('gemini', raw.replace(/@[a-zA-Z0-9_-]+/g, '').trim(), raw);
+    return;
+  }
+
   // ¿Va a una base? @base explícito, o tarea con "Base de datos para tareas" configurada
   const db = targetDatabase(parsed.topic, parsed.blockType === 'todo');
   if (db && (parsed.blockType === 'todo' || parsed.blockType === 'text')) {
@@ -339,7 +349,8 @@ async function submitInput(): Promise<void> {
     done: false,
     text: parsed.cleanText || 'Nuevo bloque en Notion',
     code: parsed.codeBlock ?? null,
-    links: []
+    links: [],
+    status: session ? 'sending' : 'local'
   });
   persistNotes();
   render();
@@ -376,7 +387,9 @@ async function submitToDatabase(db: NotionDatabase, rawText: string, isTask: boo
     text: first.title,
     chips: first.chips,
     notionDoneProp: first.doneProp,
-    links: []
+    links: [],
+    status: session ? 'sending' : 'local',
+    dest: db.title
   });
   persistNotes();
   render();
@@ -401,9 +414,11 @@ async function submitToDatabase(db: NotionDatabase, rawText: string, isTask: boo
 
   const ids = await withStatus(() => createRow(db.id, row.properties), 'Notion • Error al enviar');
   const note = state.notes.find((n) => n.id === noteId);
-  if (ids && note) {
-    note.notionBlockIds = ids;
+  if (note) {
+    if (ids) note.notionBlockIds = ids;
+    note.status = ids ? 'sent' : 'error';
     persistNotes();
+    render();
   }
 }
 
@@ -413,27 +428,38 @@ function aiErrorText(model: string, code: string | undefined, detail: string): s
   return `${model} está saturado o no responde en este momento. Prueba de nuevo en unos minutos. (*${detail}*)`;
 }
 
+/** Últimos mensajes como contexto para la IA (del más viejo al más nuevo). */
+function chatHistory(limit = 12): { role: 'user' | 'assistant'; text: string }[] {
+  return state.notes
+    .filter((n) => !n.pending && n.text)
+    .slice(0, limit)
+    .reverse()
+    .map((n) => ({ role: n.isAI ? 'assistant' : 'user', text: n.chips?.length ? `${n.text} (${n.chips.join(', ')})` : n.text }));
+}
+
 async function submitAi(mode: 'gemini' | 'claude' | 'auto', query: string, raw: string): Promise<void> {
   const model = mode === 'claude' ? 'Claude' : 'Gemini';
-  state.notes.unshift({ id: Date.now(), time: 'Ahora', topic: state.activeTopic || DEFAULT_TOPIC, blockType: 'text', text: query || raw, links: [] });
+  const history = chatHistory();
+  const now = Date.now();
+  state.notes.unshift({ id: now, time: 'Ahora', topic: state.activeTopic || DEFAULT_TOPIC, blockType: 'text', text: query || raw, links: [], kind: 'question' });
+  state.notes.unshift({ id: now + 1, time: 'Ahora', topic: 'ai', isAI: true, model, text: '', links: [], pending: true });
   persistNotes();
   render();
 
   el.avatar.classList.add('syncing');
-  const data = await aiRoute(mode, query, Object.keys(state.topics));
+  const data = await aiRoute(mode, query || raw, Object.keys(state.topics), { history });
   el.avatar.classList.remove('syncing');
 
-  state.notes.unshift({
-    id: Date.now() + 1,
-    time: 'Ahora',
-    topic: 'ai',
-    isAI: true,
-    model: data.model || model,
-    text: data.error ? aiErrorText(model, data.code, data.error) : data.text || data.parsed?.summary || 'Procesado.',
-    links: (data.parsed?.relatedTopics || []).filter((t) => state.topics[t])
-  });
+  const reply = state.notes.find((n) => n.id === now + 1);
+  if (reply) {
+    Object.assign(reply, {
+      pending: false,
+      model: data.model || model,
+      text: data.error ? aiErrorText(model, data.code, data.error) : data.text || data.parsed?.summary || 'Procesado.',
+      links: (data.parsed?.relatedTopics || []).filter((t) => state.topics[t])
+    });
+  }
   persistNotes();
-  pulseSync();
   render();
 }
 
@@ -483,6 +509,13 @@ el.notionSectionBtn.addEventListener('click', () => setNotionSection(el.topics.c
 setNotionSection(!!getItem(KEYS.notionSectionOpen));
 
 /* ───────────── Eventos ───────────── */
+
+// La caja crece con el texto (hasta su max-height) y vuelve a su tamaño al enviar
+function autosize(): void {
+  el.input.style.height = 'auto';
+  el.input.style.height = `${el.input.scrollHeight}px`;
+}
+el.input.addEventListener('input', autosize);
 
 el.input.addEventListener('keydown', (e) => {
   if (slashMenu.handleKey(e)) return;

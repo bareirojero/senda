@@ -14,6 +14,12 @@ export const state = {
   searchText: ''
 };
 
+// Respuestas que quedaron a medias si se cerró la app mientras la IA contestaba
+for (const n of cleaned) {
+  if (n.pending) Object.assign(n, { pending: false, text: n.text || '*Sin respuesta: la app se cerró antes de recibirla.*' });
+  if (n.status === 'sending') n.status = 'error';
+}
+
 if (cleaned.length !== stored.length) setJSON(KEYS.notes, cleaned);
 
 // Temas creados en sesiones anteriores (@tema) siguen apareciendo en la barra lateral.

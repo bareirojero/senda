@@ -18,6 +18,7 @@ function visibleNotes(): Note[] {
 }
 
 function contentHtml(note: Note): string {
+  if (note.pending) return '<div class="typing" aria-label="Escribiendo"><span></span><span></span><span></span></div>';
   // Las respuestas de IA traen párrafos y listas
   if (note.isAI) return `<div class="note-content md">${parseBlockMarkdown(note.text)}</div>`;
   const t = parseInlineMarkdown(note.text);
@@ -45,9 +46,24 @@ function contentHtml(note: Note): string {
   }
 }
 
+const STATUS_TEXT: Record<NonNullable<Note['status']>, string> = {
+  sending: 'Enviando…',
+  sent: '✓ En Notion',
+  error: 'No se envió a Notion',
+  local: 'Solo en Senda'
+};
+
+function statusHtml(note: Note): string {
+  if (!note.status || note.isAI || note.kind === 'question') return '';
+  const dest = note.status === 'sent' && note.dest ? ` · ${escapeHtml(note.dest)}` : '';
+  return `<div class="note-status s-${note.status}">${STATUS_TEXT[note.status]}${dest}</div>`;
+}
+
 function cardHtml(note: Note): string {
   const meta = topicMeta(note.topic);
-  const badge = note.isAI
+  const badge = note.kind === 'question'
+    ? ''
+    : note.isAI
     ? `<span class="badge-topic" style="background:rgba(107,70,193,0.12); color:var(--pastel-purple-fg);">✦ ${escapeHtml(note.model || 'IA')}</span>`
     : `<span class="badge-topic" style="background:${meta.bg}; color:${meta.fg};" data-topic="${escapeHtml(note.topic)}">${escapeHtml(meta.label)}</span>
        <span class="badge-notion-dest">→ ${escapeHtml(meta.notionDest)}</span>`;
@@ -79,7 +95,8 @@ function cardHtml(note: Note): string {
     ${contentHtml(note)}
     ${chips}
     ${code}
-    ${links}`;
+    ${links}
+    ${statusHtml(note)}`;
 }
 
 export function renderNotes(feed: HTMLElement): void {
@@ -96,7 +113,7 @@ export function renderNotes(feed: HTMLElement): void {
   const frag = document.createDocumentFragment();
   for (const note of notes) {
     const card = document.createElement('div');
-    const extra = note.isAI ? 'ai-card' : note.blockType === 'callout' ? 'callout-card' : '';
+    const extra = note.isAI ? 'ai-card' : `user-msg${note.kind === 'question' ? ' question-card' : ''}${note.blockType === 'callout' ? ' callout-card' : ''}`;
     card.className = `note-card ${extra}`;
     card.innerHTML = cardHtml(note);
     frag.appendChild(card);
