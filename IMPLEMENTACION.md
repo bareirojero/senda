@@ -12,33 +12,46 @@ Senda es un hub minimalista de captura rápida que organiza notas, tareas y cons
 3. Abre la página o base de datos de Notion donde Senda guardará tus notas, haz clic en el menú `•••` (arriba a la derecha) → **Connections** → selecciona **Senda**.
 4. Copia el **ID de la página** desde la URL de Notion (los 32 caracteres al final del enlace, antes del `?`).
 
-### 1.2. Subir el código a GitHub
-Crea o selecciona el repositorio en tu cuenta de GitHub donde alojarás el proyecto con esta estructura:
-- `index.html`
-- `package.json`
-- `tsconfig.json`
-- `vite.config.ts`
-- `public/icon.svg` y `public/manifest.json`
-- `api/notion-sync.ts` y `api/ai-route.ts`
-- `src/lib/parser.ts`
-- `IMPLEMENTACION.md`
+### 1.2. Repositorio en GitHub
+El código vive en **[bareirojero/senda](https://github.com/bareirojero/senda)** con esta estructura:
 
-```bash
-git init
-git add .
-git commit -m "feat: Senda v1.0 Hub hacia Notion"
-git branch -M main
-git remote add origin <URL_DE_TU_REPOSITORIO_GITHUB>
-git push -u origin main
 ```
+index.html              ← solo marcado; carga /src/main.ts
+src/main.ts             ← arranque, vistas, envío del scratchpad, sesión de Notion
+src/style.css           ← estilos v5.1 (4 temas)
+src/state.ts            ← estado de notas/temas + persistencia
+src/types.ts
+src/data/commands.ts    ← catálogo del menú /
+src/data/seed.ts        ← notas y temas iniciales
+src/lib/parser.ts       ← comandos / + Markdown → bloques de la API de Notion
+src/lib/markdown.ts     ← render seguro de Markdown en línea
+src/lib/storage.ts      ← acceso seguro a localStorage
+src/lib/api.ts          ← cliente de /api/*
+src/ui/slash-menu.ts    ← menú flotante /
+src/ui/feed.ts          ← tarjetas y barra lateral de temas
+src/ui/graph.ts         ← red neuronal en <canvas> (ratón + táctil)
+api/notion-sync.ts      ← GET usuario+páginas / POST bloques
+api/ai-route.ts         ← /gemini, /claude, /auto
+api/oauth-login.ts      ← inicia OAuth de Notion
+api/oauth-callback.ts   ← canjea el código y guarda la sesión cifrada
+api/oauth-logout.ts     ← cierra la sesión
+api/_lib/               ← utilidades compartidas (no son endpoints)
+tests/                  ← Vitest: parser y flujo OAuth
+.github/workflows/ci.yml
+```
+
+Comandos locales: `npm install`, `npm run dev`, `npm test`, `npm run build`.
+
+**CI:** cada push a `main` y cada Pull Request ejecuta `typecheck → tests → build` en GitHub Actions y adjunta `dist/` como artefacto.
 
 ### 1.3. Publicar en Vercel (Frontend + Backend Serverless)
 1. Entra a [vercel.com](https://vercel.com) con tu cuenta de GitHub e importa el repositorio elegido.
-2. En **Environment Variables**, agrega:
-   - `NOTION_TOKEN`: tu secreto `ntn_...`
+2. En **Environment Variables**, agrega (ver `.env.example`):
+   - `NOTION_TOKEN`: tu secreto `ntn_...` (modo integración interna)
    - `NOTION_DEFAULT_PAGE_ID`: el ID de 32 caracteres de tu página en Notion
    - `GEMINI_API_KEY`: tu clave de Google AI Studio (para `/gemini` y `/auto`)
    - `CLAUDE_API_KEY`: tu clave de Anthropic (para `/claude`)
+   - Opcionales: `GEMINI_MODEL` (por defecto `gemini-3.5-flash`) y `CLAUDE_MODEL` (por defecto `claude-sonnet-5-5`)
 3. Haz clic en **Deploy**. En 30 segundos tendrás tu URL HTTPS lista.
 
 ### 1.4. Instalar en Android, Windows y Linux (PWA)
@@ -51,10 +64,23 @@ git push -u origin main
 
 Una vez que la versión Web/PWA esté corriendo en producción, puedes dar el siguiente salto:
 
-### 2.1. Autenticación OAuth de Notion (Conectar con un clic sin copiar tokens)
-1. En [notion.so/my-integrations](https://www.notion.so/my-integrations), cambia el tipo de integración de *Internal* a **Public**.
-2. Configura la **Redirect URI** apuntando a `https://tu-dominio.vercel.app/api/oauth-callback`.
-3. Al autorizar, Notion devolverá un `access_token`, `workspace_name` y `owner.user.name`, poblando automáticamente la píldora superior derecha con el usuario real conectado.
+### 2.1. Autenticación OAuth de Notion (Conectar con un clic sin copiar tokens) — ✅ implementado
+1. En [notion.so/my-integrations](https://www.notion.so/my-integrations) crea una integración **Public** (o cambia la existente).
+2. En **Redirect URIs** agrega exactamente `https://<tu-dominio>.vercel.app/api/oauth-callback` (y la de cada dominio propio que uses).
+3. Copia **OAuth client ID** y **OAuth client secret** a Vercel:
+   - `NOTION_OAUTH_CLIENT_ID`
+   - `NOTION_OAUTH_CLIENT_SECRET`
+   - `SESSION_SECRET`: 32+ caracteres aleatorios (`openssl rand -base64 32`). Cifra la cookie de sesión.
+   - `APP_URL` (opcional): fuerza el origen de la redirect URI si usas varios dominios.
+4. Redeploy. En **Personalizar → Conectar con Notion** el usuario autoriza y elige qué páginas compartir.
+
+Cómo funciona:
+- `/api/oauth-login` genera un `state` anti-CSRF (cookie de 10 min) y redirige a Notion.
+- `/api/oauth-callback` valida el `state`, canjea el `code` en `https://api.notion.com/v1/oauth/token` y guarda `access_token`, workspace y nombre del usuario en una cookie **httpOnly cifrada con AES-256-GCM** (180 días). El token nunca llega al JavaScript del navegador.
+- `/api/notion-sync` usa, por prioridad: token manual (`x-notion-token`) → sesión OAuth → `NOTION_TOKEN`. El `GET` devuelve el usuario real, el workspace y las páginas compartidas; la píldora superior y el selector de **Página destino** se llenan solos.
+- `/api/oauth-logout` borra la sesión.
+
+> Nota para Tauri (Paso 2.2): dentro de la app nativa la cookie no viaja entre orígenes; ahí se seguirá usando el token manual o un flujo con deep link, que se resolverá al configurar Tauri.
 
 ### 2.2. Empaquetado Nativo Ligero (Windows `.exe`, Linux `.AppImage`, Android `.apk`)
 Para compilar binarios nativos ultrarrápidos (~8 MB) reutilizando exactamente el mismo frontend:
