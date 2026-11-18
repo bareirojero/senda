@@ -136,3 +136,16 @@ Sin clave, cualquiera que conozca tu URL de Vercel puede leer tu historial, escr
 
 1. En Vercel → **Settings → Environment Variables**, agrega `SENDA_ACCESS_KEY` con una clave larga (p. ej. `openssl rand -base64 24`) y haz **Redeploy**.
 2. En cada dispositivo: **Personalizar → Clave de acceso de Senda** → pega la misma clave → **Guardar**. Se pide una sola vez por dispositivo.
+
+---
+
+## Vista Hoy, dictado y captura sin conexión
+
+- **Vista Hoy** (arriba de la pantalla principal): tareas pendientes de hoy y vencidas, leídas en vivo de la base de tareas (`/api/tasks`). Los botones agrupan por un select de la base (por defecto *Ámbito*: Trabajo / Personal); se cambia en **Personalizar → Botones de la vista Hoy**. Marcar una casilla tilda *Hecho* en Notion.
+- **Gemini con tus tareas reales:** las preguntas con «?» incluyen las tareas pendientes y la fecha de hoy como contexto. En el chat Gemini solo responde; no guarda nada.
+- **Dictado:** botón de micrófono en la caja. Usa el reconocimiento de voz del navegador si existe; si no (APK), graba hasta 60 s y transcribe con Gemini (requiere `GEMINI_API_KEY`). El workflow del APK declara el permiso `RECORD_AUDIO`.
+- **Sin conexión:** Senda usa la última copia de tu Notion (bases, obras, opciones) para clasificar; lo que no se pudo enviar queda «En espera» y se envía solo al volver la conexión.
+
+## Firma fija del APK
+
+Con los secretos `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD` y `ANDROID_KEY_ALIAS` cargados en GitHub, todos los APK se firman con la misma clave y cada versión se instala encima de la anterior.

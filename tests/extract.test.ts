@@ -139,3 +139,15 @@ describe('#etiquetas para relaciones y opciones con guiones', () => {
     expect(r.chips.filter((c) => c.startsWith('↗'))).toHaveLength(1);
   });
 });
+
+describe('conectores antes de la fecha', () => {
+  it.each([
+    ['CAIPI: Racionales del mes de Noviembre para mañana', 'CAIPI: Racionales del mes de Noviembre'],
+    ['entregar planos hasta el viernes', 'Entregar planos'],
+    ['pagar factura antes del 3/12', 'Pagar factura'],
+    ['para mañana revisar losa', 'Revisar losa'],
+    ['reunión del lunes con Olimpia', 'Reunión con Olimpia']
+  ])('%s → %s', (text, title) => {
+    expect(extractRow(text, misTareas, NOW).title).toBe(title);
+  });
+});

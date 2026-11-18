@@ -63,6 +63,7 @@ const STATUS_TEXT: Record<NonNullable<Note['status']>, string> = {
   sending: 'Enviando…',
   sent: '✓ En Notion',
   error: 'No se envió a Notion',
+  queued: 'En espera · se enviará al volver la conexión',
   local: 'Solo en Senda'
 };
 

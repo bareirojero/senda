@@ -108,6 +108,13 @@ jobs:
         run: npx tauri android init --ci
 
       # "android init" deja los íconos de fábrica de Tauri: se reemplazan por los de Senda
+      # Dictado por voz: el WebView pide el micrófono y Android exige el permiso declarado
+      - name: Permiso de micrófono
+        run: |
+          M=src-tauri/gen/android/app/src/main/AndroidManifest.xml
+          grep -q RECORD_AUDIO "$M" || sed -i 's#<application#<uses-permission android:name="android.permission.RECORD_AUDIO" />\n    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />\n    <application#' "$M"
+          grep -n "uses-permission" "$M"
+
       - name: Íconos de Senda
         run: |
           RES=src-tauri/gen/android/app/src/main/res

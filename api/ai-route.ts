@@ -24,7 +24,11 @@ class ProviderError extends Error {
 /** Saturación o límites: vale la pena probar otro modelo. */
 const isTransient = (status: number) => status === 429 || status >= 500;
 
-async function callGemini(key: string, prompt: string, opts: { json?: boolean; system?: string } = {}): Promise<{ text: string; model: string }> {
+async function callGemini(
+  key: string,
+  prompt: string,
+  opts: { json?: boolean; system?: string; audio?: string } = {}
+): Promise<{ text: string; model: string }> {
   let last: ProviderError | undefined;
   for (const model of GEMINI_MODELS) {
     const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
@@ -32,7 +36,7 @@ async function callGemini(key: string, prompt: string, opts: { json?: boolean; s
       headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
       body: JSON.stringify({
         ...(opts.system ? { systemInstruction: { parts: [{ text: opts.system }] } } : {}),
-        contents: [{ parts: [{ text: prompt }] }],
+        contents: [{ parts: [...(opts.audio ? [{ inline_data: { mime_type: 'audio/wav', data: opts.audio } }] : []), { text: prompt }] }],
         ...(opts.json ? { generationConfig: { responseMimeType: 'application/json' } } : {})
       })
     });
@@ -112,8 +116,8 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   }
   if (!requireAccess(req, res)) return;
 
-  const { mode, prompt, availableTopics, recentContext, schema, today, history } = (req.body || {}) as {
-    mode?: 'gemini' | 'claude' | 'auto' | 'extract';
+  const { mode, prompt, availableTopics, recentContext, schema, today, history, tasks, audio } = (req.body || {}) as {
+    mode?: 'gemini' | 'claude' | 'auto' | 'extract' | 'transcribe';
     prompt?: string;
     availableTopics?: string[];
     recentContext?: string;
@@ -121,8 +125,12 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     today?: string;
     /** Últimos mensajes del chat de Senda, del más viejo al más nuevo */
     history?: { role: 'user' | 'assistant'; text: string }[];
+    /** Tareas pendientes leídas de Notion (una por línea), fuente de verdad para preguntas */
+    tasks?: string;
+    /** Audio WAV en base64 para modo transcribe */
+    audio?: string;
   };
-  if (!prompt) return res.status(400).json({ error: 'Falta el texto a procesar.' });
+  if (!prompt && mode !== 'transcribe') return res.status(400).json({ error: 'Falta el texto a procesar.' });
 
   const keys = {
     gemini: header(req, 'x-gemini-key') || process.env.GEMINI_API_KEY,
@@ -136,7 +144,10 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
 
   const systemInstruction = `Eres el asistente de Senda, la bandeja de entrada rápida del usuario hacia su Notion.
 El usuario anota ideas, tareas y notas de obra (es ingeniero civil) y a veces te hace preguntas: respóndelas en español, breve y directo, como en un chat.
+Hoy es ${today || new Date().toISOString().slice(0, 10)}.
+IMPORTANTE: en este chat no puedes guardar, crear, mover ni modificar nada. Senda guarda en Notion lo que el usuario escribe SIN "?"; tú solo respondes. Nunca digas que guardaste, anotaste o agendaste algo.
 Si conviene, sugiere cómo anotarlo en Senda (p. ej. "#tarea mañana 8h …").
+${tasks ? `Tareas pendientes en Notion (fuente de verdad; respeta sus fechas, "vencida" = fecha pasada):\n${String(tasks).slice(0, 6000)}` : ''}
 Temas/páginas disponibles: ${JSON.stringify(availableTopics || [])}.
 ${transcript ? `Conversación reciente (para contexto):\n${transcript}` : `Contexto reciente: ${recentContext || 'Ninguno'}.`}
 ${
@@ -148,6 +159,18 @@ ${
   }`;
 
   try {
+    // transcribe: dictado por voz (solo Gemini acepta audio)
+    if (mode === 'transcribe') {
+      if (!audio || audio.length > 3_500_000) return res.status(400).json({ error: 'Audio vacío o demasiado largo (máx. 60 s).' });
+      if (!keys.gemini) return res.status(401).json({ error: 'El dictado necesita GEMINI_API_KEY', code: 'missing_key' });
+      const r = await callGemini(
+        keys.gemini,
+        'Transcribe literalmente en español lo que se dice en el audio. Devuelve solo el texto, sin comillas ni comentarios. Si no hay voz, devuelve vacío.',
+        { audio }
+      );
+      return res.status(200).json({ model: 'Gemini', text: r.text.trim() });
+    }
+
     // extract: completar propiedades de una base de Notion a partir del texto
     if (mode === 'extract') {
       const extractPrompt = `Convierte la nota en propiedades para una base de Notion.
@@ -157,7 +180,7 @@ ${JSON.stringify(schema || [])}
 Devuelve exclusivamente JSON válido:
 {"title": "título breve en infinitivo, sin la fecha", "date": "ISO 8601 con zona horaria, o null", "selects": {"Propiedad": "Opción"}, "relations": {"Propiedad": ["Título de la fila, sin lo que va entre paréntesis"]}}
 Omite lo que no puedas deducir con seguridad.
-Nota: ${prompt}`;
+Nota: ${prompt || ''}`;
       const r = await withFallback('gemini', keys, {
         gemini: (k) => callGemini(k, extractPrompt, { json: true }),
         claude: (k) => callClaude(k, extractPrompt)
@@ -167,8 +190,8 @@ Nota: ${prompt}`;
 
     const prefer = mode === 'claude' ? 'claude' : 'gemini';
     const r = await withFallback(prefer, keys, {
-      gemini: (k) => callGemini(k, prompt, { json: mode === 'auto', system: systemInstruction }),
-      claude: (k) => callClaude(k, prompt, systemInstruction)
+      gemini: (k) => callGemini(k, prompt || '', { json: mode === 'auto', system: systemInstruction }),
+      claude: (k) => callClaude(k, prompt || '', systemInstruction)
     });
     const label = `${r.provider}${mode === 'auto' ? ' Auto' : ''}${r.fallback ? ' (respaldo)' : ''}`;
 
