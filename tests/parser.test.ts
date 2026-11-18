@@ -76,3 +76,16 @@ describe('parseInputToNotion', () => {
     expect(parseInputToNotion('/todos los días').blockType).toBe('text');
   });
 });
+
+import { parseBlockMarkdown } from '../src/lib/markdown';
+
+describe('parseBlockMarkdown (respuestas de IA)', () => {
+  it('convierte listas y párrafos, escapando HTML', () => {
+    const html = parseBlockMarkdown('Temas:\n* **mis-tareas**\n* obras\n\nDime <qué> anotar');
+    expect(html).toBe('<p>Temas:</p><ul class="md-list"><li><strong>mis-tareas</strong></li><li>obras</li></ul><p>Dime &lt;qué&gt; anotar</p>');
+  });
+
+  it('listas numeradas y encabezados', () => {
+    expect(parseBlockMarkdown('## Plan\n1. uno\n2. dos')).toBe('<p class="md-heading">Plan</p><ol class="md-list"><li>uno</li><li>dos</li></ol>');
+  });
+});

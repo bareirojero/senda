@@ -75,6 +75,8 @@ export interface AiResponse {
   text?: string;
   /** Motivo del fallo devuelto por el servidor (sin llave, cuota, modelo…) */
   error?: string;
+  /** missing_key: falta la llave · unavailable: proveedor saturado/caído · rejected: llave inválida o sin crédito */
+  code?: 'missing_key' | 'unavailable' | 'rejected';
   parsed?: { topic?: string; blockType?: string; cleanText?: string; relatedTopics?: string[]; summary?: string };
 }
 
@@ -95,10 +97,10 @@ export async function aiRoute(
       body: JSON.stringify({ mode, prompt, availableTopics, ...extra })
     });
     const data = (await res.json().catch(() => ({}))) as AiResponse;
-    if (!res.ok) return { error: data.error || `El servidor respondió ${res.status}` };
+    if (!res.ok) return { error: data.error || `El servidor respondió ${res.status}`, code: data.code };
     return data;
   } catch {
-    return { error: 'Sin conexión con el servidor' };
+    return { error: 'Sin conexión con el servidor', code: 'unavailable' };
   }
 }
 

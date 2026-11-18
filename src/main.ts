@@ -407,6 +407,12 @@ async function submitToDatabase(db: NotionDatabase, rawText: string, isTask: boo
   }
 }
 
+function aiErrorText(model: string, code: string | undefined, detail: string): string {
+  if (code === 'missing_key') return `Falta la llave de ${model}. Agrégala en **Personalizar** o como variable en Vercel.`;
+  if (code === 'rejected') return `${model} rechazó la llave: *${detail}*. Revisa que sea correcta y tenga crédito.`;
+  return `${model} está saturado o no responde en este momento. Prueba de nuevo en unos minutos. (*${detail}*)`;
+}
+
 async function submitAi(mode: 'gemini' | 'claude' | 'auto', query: string, raw: string): Promise<void> {
   const model = mode === 'claude' ? 'Claude' : 'Gemini';
   state.notes.unshift({ id: Date.now(), time: 'Ahora', topic: state.activeTopic || DEFAULT_TOPIC, blockType: 'text', text: query || raw, links: [] });
@@ -423,9 +429,7 @@ async function submitAi(mode: 'gemini' | 'claude' | 'auto', query: string, raw: 
     topic: 'ai',
     isAI: true,
     model: data.model || model,
-    text: data.error
-      ? `No pude usar ${model}: *${data.error}*. Configura la llave en **Personalizar** o en Vercel.`
-      : data.text || data.parsed?.summary || 'Procesado.',
+    text: data.error ? aiErrorText(model, data.code, data.error) : data.text || data.parsed?.summary || 'Procesado.',
     links: (data.parsed?.relatedTopics || []).filter((t) => state.topics[t])
   });
   persistNotes();
