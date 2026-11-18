@@ -51,7 +51,7 @@ Comandos locales: `npm install`, `npm run dev`, `npm test`, `npm run build`.
    - `NOTION_DEFAULT_PAGE_ID`: el ID de 32 caracteres de tu página en Notion
    - `GEMINI_API_KEY`: tu clave de Google AI Studio (para `/gemini` y `/auto`)
    - `CLAUDE_API_KEY`: tu clave de Anthropic (para `/claude`)
-   - Opcionales: `GEMINI_MODEL` (por defecto la cadena `gemini-3.8-flash,gemini-3.6-flash,gemini-3.5-flash-lite`; si uno está saturado se prueba el siguiente y, al final, Claude) y `CLAUDE_MODEL` (por defecto `claude-sonnet-5-5`)
+   - Opcionales: `GEMINI_MODEL` (por defecto la cadena `gemini-3.5-flash-lite,gemini-3.8-flash,gemini-3.6-flash`; si uno está saturado se prueba el siguiente y, al final, Claude) y `CLAUDE_MODEL` (por defecto `claude-sonnet-5-5`)
 3. Haz clic en **Deploy**. En 30 segundos tendrás tu URL HTTPS lista.
 
 ### 1.4. Instalar en Android, Windows y Linux (PWA)
