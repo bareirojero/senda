@@ -1,6 +1,7 @@
 import type { Note, TopicMeta, View } from './types';
 import { DEFAULT_TOPIC, LEGACY_SAMPLE_IDS, defaultTopics, newTopicMeta, paletteFor, slugify } from './data/seed';
 import { KEYS, getJSON, setJSON } from './lib/storage';
+import { norm } from './lib/extract';
 
 // Arranca vacío. Si quedaron guardadas las notas de muestra de v5.1, se eliminan.
 const stored = getJSON<Note[] | null>(KEYS.notes, null) || [];
@@ -58,4 +59,28 @@ export function syncTopicsFromNotion(pages: { id: string; title: string }[], dat
   for (const n of state.notes) {
     if (n.topic && n.topic !== 'ai' && !state.topics[n.topic]) state.topics[n.topic] = newTopicMeta(n.topic);
   }
+}
+
+/**
+ * "@tareas", "@mis", "@obras", "@mi-dia" → clave del tema (base o página) que mejor coincide.
+ * Exacto > empieza igual > alguna palabra empieza igual; a igualdad, gana una base.
+ */
+export function findTopic(token: string): string | undefined {
+  const t = norm(token);
+  if (!t) return undefined;
+  let best: { key: string; score: number } | undefined;
+  for (const [key, meta] of Object.entries(state.topics)) {
+    if (key === 'ai') continue;
+    const k = norm(key);
+    const l = norm(meta.label);
+    let score = 0;
+    if (k === t || l === t) score = 30;
+    else if (k.startsWith(t) || l.startsWith(t)) score = 20;
+    else if (l.split(' ').some((w) => w.startsWith(t))) score = 10;
+    if (!score) continue;
+    if (meta.databaseId) score += 2;
+    else if (meta.pageId) score += 1;
+    if (!best || score > best.score) best = { key, score };
+  }
+  return best?.key;
 }
