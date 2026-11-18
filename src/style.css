@@ -1191,9 +1191,21 @@ canvas#neural-canvas:active { cursor: grabbing; }
 
 /* ───────────── Móvil / Android ───────────── */
 @media (max-width: 720px) {
-  /* Pantalla completa: el riel llega hasta arriba (detrás de la hora) y abajo;
-     solo el contenido se corre para no quedar bajo la barra de estado */
-  body { padding: 0; }
+  /* Franja pareja detrás de la barra de estado (hora, batería), de lado a lado;
+     debajo, riel y contenido arrancan a la misma altura */
+  body { padding: var(--safe-top) 0 0; }
+  body::before {
+    content: '';
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: var(--safe-top);
+    background: var(--bg-rail);
+    border-bottom: 1px solid var(--border);
+    z-index: 300;
+    pointer-events: none;
+  }
 
   /* El riel vertical cede su lugar: el logo pasa al header */
   .left-brand-rail { display: none; }
@@ -1462,17 +1474,15 @@ aside.right-sidebar.collapsed .topics-list.collapsed { display: block; }
 .rail-bottom { display: flex; flex-direction: column; align-items: center; gap: 14px; }
 
 @media (max-width: 720px) {
+  /* Logo y "Hoy" alineados: misma distancia desde la franja */
   .left-brand-rail {
     display: flex;
     width: 46px;
-    height: 100%;
-    padding: calc(14px + var(--safe-top)) 0 calc(18px + var(--safe-bottom));
+    padding: 16px 0 calc(18px + var(--safe-bottom));
     justify-content: flex-start;
     gap: 18px;
   }
-  .content-column { padding-top: calc(10px + var(--safe-top)); }
-  body.search-open header { padding-top: var(--safe-top); height: calc(56px + var(--safe-top)); }
-  body.search-open .content-column { padding-top: 10px; }
+  .content-column { padding-top: 12px; }
   .left-brand-rail .rail-vertical-title { font-size: 12px; }
   .rail-bottom { margin-top: auto; }
 
