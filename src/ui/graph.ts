@@ -34,18 +34,22 @@ export function initGraph(canvas: HTMLCanvasElement, card: HTMLElement): void {
   canvas.height = h * dpr;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-  const cx = w / 2;
+  const narrow = w < 500;
+  // Etiquetas a la derecha del nodo → en móvil se corre el centro a la izquierda
+  const cx = narrow ? w * 0.38 : w / 2;
   const cy = h / 2;
   const keys = Object.keys(state.topics);
+  // En pantallas angostas (Android) el anillo se achica para que todo quepa
+  const scale = Math.min(1, (w - 140) / 300);
 
   nodes = keys.map((k, i) => {
     const angle = (i / keys.length) * Math.PI * 2 - 0.4;
     return {
       id: k,
       label: state.topics[k].label,
-      x: cx + Math.cos(angle) * 145,
-      y: cy + Math.sin(angle) * 115,
-      r: 26,
+      x: cx + Math.cos(angle) * 145 * scale,
+      y: cy + Math.sin(angle) * 115 * Math.max(scale, 0.8),
+      r: narrow ? 20 : 26,
       color: state.topics[k].dot,
       isTopic: true
     };
@@ -58,9 +62,9 @@ export function initGraph(canvas: HTMLCanvasElement, card: HTMLElement): void {
     nodes.push({
       id: `n-${n.id}`,
       label: n.text.replace(/[*`~]/g, '').slice(0, 26) + '...',
-      x: parent.x + Math.cos(a) * 85,
-      y: parent.y + Math.sin(a) * 85,
-      r: 10,
+      x: parent.x + Math.cos(a) * 85 * Math.max(scale, 0.6),
+      y: parent.y + Math.sin(a) * 85 * Math.max(scale, 0.6),
+      r: narrow ? 8 : 10,
       color: n.isAI ? '#a78bfa' : '#94a3b8',
       parent: parent.id,
       links: n.links || []

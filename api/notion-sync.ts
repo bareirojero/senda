@@ -4,6 +4,9 @@ import { readSession } from './_lib/session.js';
 
 type Source = 'token' | 'oauth' | 'env';
 
+/** UUID de Notion, con o sin guiones. */
+const BLOCK_ID = /^[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}$/i;
+
 /**
  * Prioridad de credenciales:
  *   1. x-notion-token  (token interno pegado en Personalizar)
@@ -94,6 +97,37 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     } catch (err) {
       return res.status(500).json({ error: errorMessage(err) });
     }
+  }
+
+  // PATCH: marcar / desmarcar una tarea
+  if (req.method === 'PATCH') {
+    try {
+      const { blockId, checked } = (req.body || {}) as { blockId?: string; checked?: boolean };
+      if (!blockId || !BLOCK_ID.test(blockId)) return res.status(400).json({ error: 'blockId inválido.' });
+      await notion.blocks.update({ block_id: blockId, to_do: { checked: !!checked } } as any);
+      return res.status(200).json({ ok: true });
+    } catch (err) {
+      return res.status(500).json({ error: errorMessage(err) });
+    }
+  }
+
+  // DELETE ?ids=a,b: mandar bloques a la papelera de Notion
+  if (req.method === 'DELETE') {
+    const ids = String(req.query?.ids || '').split(',').filter(Boolean);
+    if (ids.length === 0 || ids.length > 100 || !ids.every((id) => BLOCK_ID.test(id))) {
+      return res.status(400).json({ error: 'ids inválidos.' });
+    }
+    const failed: string[] = [];
+    for (const id of ids) {
+      try {
+        await notion.blocks.delete({ block_id: id });
+      } catch (err: any) {
+        // Ya borrado en Notion → para Senda cuenta como éxito
+        if (err?.code !== 'object_not_found' && !/archived/i.test(err?.message || '')) failed.push(id);
+      }
+    }
+    if (failed.length) return res.status(500).json({ error: 'No se pudieron borrar algunos bloques.', failed });
+    return res.status(200).json({ ok: true });
   }
 
   return res.status(405).json({ error: 'Método no permitido' });

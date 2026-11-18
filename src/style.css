@@ -85,6 +85,7 @@ body {
   font-family: var(--font-sans);
   font-size: var(--font-size);
   height: 100vh;
+  height: 100dvh;
   display: flex;
   overflow: hidden;
   line-height: 1.6;
@@ -981,5 +982,137 @@ canvas#neural-canvas { width: 100%; height: 100%; cursor: grab; }
 /* Grafo: soporte táctil (Android) */
 canvas#neural-canvas { touch-action: none; }
 canvas#neural-canvas:active { cursor: grabbing; }
+
+/* Borrar nota: discreto, aparece al pasar el cursor (siempre visible en táctil) */
+.note-meta { display: flex; align-items: center; gap: 6px; }
+
+.note-delete {
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-light);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.15s, background 0.15s, color 0.15s;
+}
+
+.note-delete .nav-svg { width: 14px; height: 14px; }
+.note-card:hover .note-delete, .note-delete:focus-visible { opacity: 1; }
+.note-delete:hover { background: var(--bg-subtle); color: var(--pastel-rose-fg); }
+.note-delete.confirm { opacity: 1; background: var(--pastel-rose-bg); color: var(--pastel-rose-fg); }
+
+@media (hover: none) {
+  .note-delete { opacity: 0.6; }
+}
+
+.header-brand, .btn-mobile-menu, .drawer-backdrop { display: none; }
+.header-right { display: flex; align-items: center; gap: 8px; }
+
+/* ───────────── Móvil / Android ───────────── */
+@media (max-width: 720px) {
+  body { padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
+
+  /* El riel vertical cede su lugar: el logo pasa al header */
+  .left-brand-rail { display: none; }
+
+  header { height: 56px; padding: 0 12px; gap: 10px; }
+  .header-left-spacer { width: auto; }
+
+  .header-brand {
+    display: flex;
+    width: 34px;
+    height: 34px;
+    border-radius: 9px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    align-items: center;
+    justify-content: center;
+    color: var(--text-main);
+    flex-shrink: 0;
+  }
+
+  .search-pill { flex: 1; width: auto; max-width: none; padding: 7px 14px; }
+  .search-pill input { font-size: 14px; }
+
+  /* Píldora de Notion: solo el avatar con su indicador */
+  .notion-user-pill { padding: 3px; border-radius: 50%; }
+  .notion-user-info { display: none; }
+  .notion-avatar { width: 28px; height: 28px; font-size: 11.5px; }
+
+  .btn-mobile-menu {
+    display: flex;
+    width: 34px;
+    height: 34px;
+    border-radius: 9px;
+    border: 1px solid var(--border);
+    background: var(--bg-card);
+    color: var(--text-muted);
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+
+  .content-column { padding: 14px 14px 0; }
+  .composer-card { padding: 12px 14px 10px; border-radius: 14px; }
+  textarea#note-input { font-size: 16px; min-height: 48px; }
+  .btn-send { padding: 8px 16px; font-size: 13px; }
+  .slash-menu { width: 100%; max-height: 50vh; }
+  .slash-option { padding: 9px 10px; }
+
+  .note-card { padding: 12px 14px; }
+  .note-badges { flex-wrap: wrap; row-gap: 4px; min-width: 0; }
+  .badge-notion-dest { display: none; }
+
+  /* Barra derecha → cajón deslizable */
+  aside.right-sidebar,
+  aside.right-sidebar.collapsed {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 280px;
+    max-width: 85vw;
+    padding: calc(16px + env(safe-area-inset-top)) 12px calc(16px + env(safe-area-inset-bottom));
+    align-items: stretch;
+    z-index: 200;
+    transform: translateX(100%);
+    transition: transform 0.24s ease;
+    box-shadow: var(--shadow-menu);
+  }
+
+  aside.right-sidebar.collapsed .side-heading,
+  aside.right-sidebar.collapsed .side-text,
+  aside.right-sidebar.collapsed .side-count { display: initial; }
+  aside.right-sidebar.collapsed .side-link { justify-content: space-between; padding: 8px 10px; }
+
+  body.drawer-open aside.right-sidebar { transform: translateX(0); }
+  .btn-collapse-sidebar { display: none; }
+  .side-link { padding: 11px 10px; font-size: 14.5px; }
+
+  .drawer-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 15, 15, 0.28);
+    z-index: 150;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s;
+  }
+
+  body.drawer-open .drawer-backdrop { opacity: 1; pointer-events: auto; }
+
+  .graph-floating-card { left: 14px; right: 14px; bottom: 16px; max-width: none; }
+  .config-container { padding: 18px 14px 40px; }
+  .swatch-grid { grid-template-columns: 1fr 1fr; gap: 10px; }
+  .oauth-row { flex-direction: column; align-items: stretch; }
+  .oauth-actions { justify-content: flex-end; }
+  .info-popover { right: 0; width: 100%; }
+}
 
 .hidden { display: none !important; }

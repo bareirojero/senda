@@ -1,0 +1,142 @@
+name: Android APK
+
+# Compila Senda como APK con Tauri v2. La app abre tu despliegue de Vercel
+# (variable del repo SENDA_URL), así que cada cambio web llega al teléfono sin reinstalar.
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: 'URL de Senda (si no, usa la variable SENDA_URL del repo)'
+        required: false
+  push:
+    tags: ['v*']
+  pull_request:
+    paths:
+      - 'src-tauri/**'
+      - '.github/workflows/android.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    name: Compilar APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      NDK_VERSION: 27.2.12479018
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolver URL de la app
+        id: url
+        env:
+          INPUT_URL: ${{ inputs.url }}
+          VAR_URL: ${{ vars.SENDA_URL }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          URL="${INPUT_URL:-$VAR_URL}"
+          if [ -z "$URL" ]; then
+            if [ "$EVENT" = "pull_request" ]; then
+              echo "::warning::Sin SENDA_URL: se compila solo para validar (no instalar este APK)."
+              URL="https://example.com"
+            else
+              echo "::error::Define la variable del repo SENDA_URL (Settings → Secrets and variables → Actions → Variables) o pasa 'url' al ejecutar."
+              exit 1
+            fi
+          fi
+          case "$URL" in https://*) ;; *) echo "::error::La URL debe empezar con https://"; exit 1;; esac
+          echo "value=${URL%/}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Instalar NDK
+        run: |
+          sdkmanager --install "ndk;${NDK_VERSION}" > /dev/null
+          echo "NDK_HOME=$ANDROID_HOME/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - run: npm ci
+
+      - name: Apuntar la app a ${{ steps.url.outputs.value }}
+        env:
+          SENDA_URL: ${{ steps.url.outputs.value }}
+        run: |
+          node -e '
+            const fs = require("fs");
+            const p = "src-tauri/tauri.conf.json";
+            const c = JSON.parse(fs.readFileSync(p, "utf8"));
+            c.app.windows[0].url = process.env.SENDA_URL;
+            fs.writeFileSync(p, JSON.stringify(c, null, 2));
+          '
+
+      - name: Inicializar proyecto Android
+        run: npx tauri android init --ci
+
+      - name: Compilar (release, arm64 + armv7)
+        run: npx tauri android build --apk --target aarch64 --target armv7 --ci
+
+      - name: Firmar APK
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          set -e
+          UNSIGNED=$(find src-tauri/gen/android/app/build/outputs/apk -name '*release*.apk' | head -n1)
+          test -n "$UNSIGNED" || { echo "::error::No se encontró el APK"; exit 1; }
+          BT="$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -n1)"
+
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > release.jks
+            ALIAS="${KEY_ALIAS:-senda}"
+            PASS="$KEYSTORE_PASSWORD"
+          else
+            echo "::warning::Sin secretos de firma: se usa una clave temporal. Para actualizar sin desinstalar, configura ANDROID_KEYSTORE_BASE64 y ANDROID_KEYSTORE_PASSWORD."
+            ALIAS=senda; PASS=temporal-$(date +%s)
+            keytool -genkeypair -keystore release.jks -storetype JKS -alias "$ALIAS" -keyalg RSA -keysize 2048 \
+              -validity 10000 -storepass "$PASS" -keypass "$PASS" -dname "CN=Senda CI" > /dev/null
+          fi
+
+          mkdir -p out
+          "$BT/zipalign" -f -p 4 "$UNSIGNED" out/aligned.apk
+          "$BT/apksigner" sign --ks release.jks --ks-key-alias "$ALIAS" \
+            --ks-pass "pass:$PASS" --key-pass "pass:$PASS" \
+            --out out/Senda.apk out/aligned.apk
+          "$BT/apksigner" verify out/Senda.apk
+          rm -f release.jks out/aligned.apk
+          ls -lh out/Senda.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Senda-android
+          path: out/Senda.apk
+          retention-days: 30
+
+      - name: Publicar en Releases (solo tags v*)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: out/Senda.apk
+          generate_release_notes: true

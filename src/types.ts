@@ -25,6 +25,8 @@ export interface Note {
   links?: string[];
   isAI?: boolean;
   model?: string;
+  /** IDs de los bloques creados en Notion (para borrar o marcar después). */
+  notionBlockIds?: string[];
 }
 
 export interface TopicMeta {

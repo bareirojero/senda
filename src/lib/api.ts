@@ -24,13 +24,45 @@ export async function fetchNotionSession(): Promise<NotionSession | null> {
   }
 }
 
-export async function appendBlocks(blocks: NotionBlock[], targetPageId: string): Promise<boolean> {
+/** Añade bloques a Notion. Devuelve los IDs creados, o null si falló. */
+export async function appendBlocks(blocks: NotionBlock[], targetPageId: string): Promise<string[] | null> {
   try {
     const res = await fetch('/api/notion-sync', {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json', ...notionHeaders() },
       body: JSON.stringify({ targetPageId: targetPageId || undefined, blocks })
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { results?: { id: string }[] };
+    return (data.results || []).map((r) => r.id);
+  } catch {
+    return null;
+  }
+}
+
+/** Borra bloques en Notion (van a la papelera de Notion, se pueden restaurar allí). */
+export async function deleteBlocks(ids: string[]): Promise<boolean> {
+  try {
+    const res = await fetch('/api/notion-sync?ids=' + encodeURIComponent(ids.join(',')), {
+      method: 'DELETE',
+      credentials: 'same-origin',
+      headers: notionHeaders()
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+/** Marca o desmarca una casilla de tarea en Notion. */
+export async function setTodoChecked(blockId: string, checked: boolean): Promise<boolean> {
+  try {
+    const res = await fetch('/api/notion-sync', {
+      method: 'PATCH',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json', ...notionHeaders() },
+      body: JSON.stringify({ blockId, checked })
     });
     return res.ok;
   } catch {
