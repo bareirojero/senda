@@ -1,0 +1,15 @@
+{
+  "name": "Senda — Hub hacia Notion",
+  "short_name": "Senda",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#4f6bed",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}
