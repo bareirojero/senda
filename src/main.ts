@@ -1,6 +1,6 @@
 import './style.css';
 import { state, persistNotes, ensureTopic, syncTopicsFromNotion, findTopic, onPersist } from './state';
-import { applySettings, onSyncState, pull, pushSettings, schedulePush } from './lib/sync';
+import { applySettings, markSettingsDirty, onSyncState, pull, pushSettings, schedulePush, schedulePushSettings } from './lib/sync';
 import { MentionMenu, type MentionItem } from './ui/mention-menu';
 import { TodayPanel, localDay } from './ui/today';
 import { VoiceInput } from './ui/voice';
@@ -64,10 +64,24 @@ const TODAY_KEYS = {
   overdueOpen: KEYS.todayOverdueOpen,
   futureOpen: KEYS.todayFutureOpen
 } as const;
-const today = new TodayPanel($('today-panel'), (t) => void completeTask(t), {
-  get: (k) => getItem(TODAY_KEYS[k as keyof typeof TODAY_KEYS]),
-  set: (k, v) => setItem(TODAY_KEYS[k as keyof typeof TODAY_KEYS], v)
-});
+const today = new TodayPanel(
+  $('today-panel'),
+  (t) => void completeTask(t),
+  {
+    get: (k) => getItem(TODAY_KEYS[k as keyof typeof TODAY_KEYS]),
+    set: (k, v) => setItem(TODAY_KEYS[k as keyof typeof TODAY_KEYS], v)
+  },
+  // Orden manual y "En curso": solo de Senda, compartidos entre dispositivos
+  (prefs) => {
+    setJSON(KEYS.todayOrder, prefs.order);
+    setJSON(KEYS.todayDoing, prefs.doing);
+    schedulePushSettings();
+  }
+);
+function loadTodayPrefs(): void {
+  today.setPrefs({ order: getJSON<string[]>(KEYS.todayOrder, []), doing: getJSON<string[]>(KEYS.todayDoing, []) });
+}
+loadTodayPrefs();
 let todayDoneProp: string | null = null;
 
 function tasksDatabase(): NotionDatabase | undefined {
@@ -130,7 +144,7 @@ function tasksForAi(): string {
       const day = t.date ? localDay(new Date(t.date.length <= 10 ? `${t.date}T12:00:00` : t.date)) : '';
       const extra = Object.entries(t.selects).map(([k, v]) => `${k}: ${v.join('/')}`);
       const rel = Object.values(t.relations).flat().map((id) => targets.find((x) => x.id === id)?.title).filter(Boolean);
-      return `- ${t.title}${t.date ? ` · fecha ${t.date.slice(0, 16).replace('T', ' ')}${day < now ? ' (vencida)' : ''}` : ' · sin fecha'}${extra.length ? ` · ${extra.join(' · ')}` : ''}${rel.length ? ` · Obra: ${rel.join(', ')}` : ''}`;
+      return `- ${today.isDoing(t.id) ? '[EN CURSO] ' : ''}${t.title}${t.date ? ` · fecha ${t.date.slice(0, 16).replace('T', ' ')}${day < now ? ' (vencida)' : ''}` : ' · sin fecha'}${extra.length ? ` · ${extra.join(' · ')}` : ''}${rel.length ? ` · Obra: ${rel.join(', ')}` : ''}`;
     })
     .join('\n');
 }
@@ -508,7 +522,7 @@ async function syncFromNotion(): Promise<void> {
   lastPull = Date.now();
   const result = await pull(state.notes);
   if (!result) return;
-  applySettings(result.settings);
+  if (applySettings(result.settings)) loadTodayPrefs();
   state.notes = result.notes;
   for (const n of state.notes) if (n.topic && n.topic !== 'ai') ensureTopic(n.topic);
   persistNotes(); // sube lo que solo estaba en este dispositivo
@@ -610,8 +624,9 @@ async function saveApiConfig(): Promise<void> {
   const token = el.cfgToken.value.trim();
   if (token) setItem(KEYS.notionToken, token);
   setItem(KEYS.notionPage, page);
-  setItem(KEYS.tasksDb, el.cfgTasksDb.value);
-  setItem(KEYS.todayGroupProp, el.cfgTodayGroup.value);
+  // Si las bases todavía no cargaron, los selectores están vacíos: no se guarda ese valor
+  if (session?.databases?.length) setItem(KEYS.tasksDb, el.cfgTasksDb.value);
+  if (el.cfgTodayGroup.options.length > 1) setItem(KEYS.todayGroupProp, el.cfgTodayGroup.value);
   if (el.cfgAccessKey.value.trim()) setItem(KEYS.accessKey, el.cfgAccessKey.value.trim());
   setItem(KEYS.aiFill, el.cfgAiFill.checked ? '1' : '');
   if (el.cfgGemini.value.trim()) setItem(KEYS.gemini, el.cfgGemini.value.trim());
@@ -619,8 +634,10 @@ async function saveApiConfig(): Promise<void> {
 
   el.cfgToken.value = el.cfgGemini.value = el.cfgClaude.value = el.cfgAccessKey.value = '';
   pulseSync();
-  await loadSession();
+  // Primero se suben los ajustes; recién después se recarga (si no, la versión vieja los pisaba)
+  markSettingsDirty();
   await pushSettings();
+  await loadSession();
   setView('stream');
 }
 

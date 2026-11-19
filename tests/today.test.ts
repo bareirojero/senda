@@ -58,3 +58,44 @@ describe('vista Hoy', () => {
     expect(toggled).toEqual(['2']);
   });
 });
+
+import { applyOrder, mergeOrder } from '../src/ui/today';
+
+describe('orden manual', () => {
+  const t = (id: string, date: string | null) => task(id, id, date, 'Trabajo');
+  it('primero lo ordenado a mano, después el resto por fecha', () => {
+    const list = [t('a', '2026-11-20'), t('b', '2026-11-18'), t('c', '2026-11-19'), t('d', null)];
+    expect(applyOrder(list, ['c', 'a']).map((x) => x.id)).toEqual(['c', 'a', 'b', 'd']);
+  });
+
+  it('reordenar una sección no desordena las otras', () => {
+    expect(mergeOrder(['x', 'a', 'y', 'b'], ['b', 'a'])).toEqual(['b', 'a', 'x', 'y']);
+  });
+});
+
+describe('En curso', () => {
+  it('▶ la sube a "En curso" (siempre visible) y avisa para guardar', () => {
+    const el = document.createElement('div');
+    const saved: { doing: string[] }[] = [];
+    const p = new TodayPanel(el, () => {}, { get: () => '', set: () => {} }, (prefs) => saved.push(prefs));
+    p.setData([task('1', 'Vencida', day(-1), 'Trabajo'), task('2', 'De hoy', day(0), 'Trabajo')], { groupProp: 'Ámbito', groupOptions: [], relTitles: new Map() });
+    el.querySelector<HTMLButtonElement>('[data-today-section="overdue"]')!.click(); // desplegar Vencidas
+    el.querySelector<HTMLButtonElement>('[data-today-doing="1"]')!.click();
+    el.querySelector<HTMLButtonElement>('[data-today-section="overdue"]')?.click(); // ya no hay vencidas sueltas
+    expect(el.querySelector('.today-label.doing')?.textContent).toContain('En curso · 1');
+    expect(titles(el)).toEqual(['Vencida', 'De hoy']); // visible aunque Vencidas esté plegada
+    expect(saved.at(-1)!.doing).toEqual(['1']);
+    el.querySelector<HTMLButtonElement>('[data-today-doing="1"]')!.click();
+    expect(saved.at(-1)!.doing).toEqual([]);
+  });
+
+  it('al marcarla hecha sale de "En curso"', () => {
+    const el = document.createElement('div');
+    const saved: { doing: string[] }[] = [];
+    const p = new TodayPanel(el, () => {}, { get: () => '', set: () => {} }, (prefs) => saved.push(prefs));
+    p.setPrefs({ order: [], doing: ['2'] });
+    p.setData([task('2', 'De hoy', day(0), 'Trabajo')], { groupProp: 'Ámbito', groupOptions: [], relTitles: new Map() });
+    p.settle('2', true);
+    expect(saved.at(-1)!.doing).toEqual([]);
+  });
+});

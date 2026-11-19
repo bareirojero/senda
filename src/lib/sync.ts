@@ -149,17 +149,45 @@ async function push(getNotes: () => Note[]): Promise<void> {
 }
 
 /** Ajustes compartidos entre dispositivos */
-const SHARED_SETTINGS = [KEYS.tasksDb, KEYS.aiFill, KEYS.notionPage, KEYS.todayGroupProp] as const;
+const SHARED_SETTINGS = [KEYS.tasksDb, KEYS.aiFill, KEYS.notionPage, KEYS.todayGroupProp, KEYS.todayOrder, KEYS.todayDoing] as const;
 
-export function applySettings(settings: Record<string, string>): void {
-  for (const k of SHARED_SETTINGS) {
-    if (k in settings) setItem(k, settings[k] || '');
-  }
+/**
+ * Cambios locales de ajustes aún sin subir: mientras existan, lo que llega de Notion
+ * NO los pisa (antes, guardar en Personalizar se revertía con la versión vieja del servidor).
+ */
+export function markSettingsDirty(): void {
+  setItem(KEYS.settingsDirty, '1');
 }
 
-export async function pushSettings(): Promise<void> {
-  if (!enabled) return;
+export function applySettings(settings: Record<string, string>): boolean {
+  if (getItem(KEYS.settingsDirty)) return false;
+  let changed = false;
+  for (const k of SHARED_SETTINGS) {
+    if (!(k in settings)) continue;
+    if ((settings[k] || '') !== getItem(k)) changed = true;
+    setItem(k, settings[k] || '');
+  }
+  return changed;
+}
+
+let settingsTimer: ReturnType<typeof setTimeout> | undefined;
+/** Sube los ajustes (agrupando cambios seguidos, como al ordenar tareas). */
+export function schedulePushSettings(delay = 800): void {
+  markSettingsDirty();
+  clearTimeout(settingsTimer);
+  settingsTimer = setTimeout(() => void pushSettings(), delay);
+}
+
+export async function pushSettings(): Promise<boolean> {
+  clearTimeout(settingsTimer);
+  if (!enabled) return false;
   const settings: Record<string, string> = {};
   for (const k of SHARED_SETTINGS) settings[k] = getItem(k);
-  await request('PUT', { settings }).catch(() => undefined);
+  try {
+    const res = await request('PUT', { settings });
+    if (res.ok) setItem(KEYS.settingsDirty, '');
+    return res.ok;
+  } catch {
+    return false;
+  }
 }
