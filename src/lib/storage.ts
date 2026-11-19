@@ -20,6 +20,9 @@ export const KEYS = {
   todayFutureOpen: 'senda_today_future_open',
   todayOrder: 'senda_today_order',
   todayDoing: 'senda_today_doing',
+  todayTime: 'senda_today_time',
+  todayLog: 'senda_today_log',
+  todayDone: 'senda_today_done',
   settingsDirty: 'senda_settings_dirty',
   sessionCache: 'senda_session_cache'
 } as const;

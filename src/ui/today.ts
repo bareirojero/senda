@@ -9,11 +9,74 @@ export interface TodayOptions {
   relTitles: Map<string, string>;
 }
 
-/** Preferencias propias de Senda (no se guardan en Notion): orden manual y tareas en curso */
+/**
+ * Tiempo de una tarea: t = acumulado (ms), s = inicio del tramo en curso, u = última actividad,
+ * n = título y g = selects (Ámbito, Categoría…) guardados para el gráfico aunque la tarea ya no exista.
+ */
+export interface TaskTime {
+  t: number;
+  s?: number;
+  u: number;
+  n?: string;
+  g?: Record<string, string[]>;
+}
+
+/** Un tramo trabajado: tarea, inicio y fin (ms) */
+/** Tarea completada: id, cuándo y sus selects (para agrupar en Rendimiento) */
+export interface DoneEntry { i: string; d: number; g?: Record<string, string[]> }
+export interface TimeSegment {
+  i: string;
+  a: number;
+  b: number;
+}
+
+/** Preferencias propias de Senda (no se guardan en Notion): orden manual, en curso, tiempos e historial */
 export interface TodayPrefs {
   order: string[];
   doing: string[];
+  time: Record<string, TaskTime>;
+  /** Tramos trabajados (últimos 60 días) para el gráfico de rendimiento */
+  log?: TimeSegment[];
+  /** Tareas terminadas desde Senda: id + momento (últimos 60 días) */
+  done?: DoneEntry[];
 }
+
+const LOG_DAYS = 60 * 86400000;
+
+/** Tiempo total, contando el tramo que está corriendo */
+export function elapsed(time: TaskTime | undefined, now = Date.now()): number {
+  if (!time) return 0;
+  return time.t + (time.s !== undefined ? Math.max(0, now - time.s) : 0);
+}
+
+/** 42 min · 1 h 05 · 12 h 30 */
+export function formatDuration(ms: number): string {
+  const min = Math.floor(ms / 60000);
+  if (min < 60) return `${min} min`;
+  return `${Math.floor(min / 60)} h ${String(min % 60).padStart(2, '0')}`;
+}
+
+/** Arranca o pausa el reloj de una tarea (puro: devuelve el mapa nuevo) */
+export function toggleTimer(time: Record<string, TaskTime>, id: string, on: boolean, now = Date.now()): Record<string, TaskTime> {
+  const cur = time[id] || { t: 0, u: now };
+  if (on) return cur.s !== undefined ? time : { ...time, [id]: { ...cur, s: now, u: now } };
+  if (cur.s === undefined) return time;
+  const { s, ...rest } = cur;
+  return { ...time, [id]: { ...rest, t: cur.t + Math.max(0, now - s), u: now } };
+}
+
+/** Al pausar: el tramo que se cierra (para el historial), o null si no estaba corriendo */
+export function closingSegment(time: Record<string, TaskTime>, id: string, now = Date.now()): TimeSegment | null {
+  const s = time[id]?.s;
+  return s !== undefined && now - s >= 1000 ? { i: id, a: s, b: now } : null;
+}
+
+/** Recorta el historial a los últimos 60 días */
+export function pruneLog<T extends { a?: number; d?: number }>(list: T[] = [], now = Date.now()): T[] {
+  return list.filter((x) => now - (x.d ?? x.a ?? 0) < LOG_DAYS);
+}
+
+const PRUNE_AFTER = 90 * 86400000;
 
 type SectionKey = 'doing' | 'overdue' | 'today' | 'future';
 
@@ -63,7 +126,8 @@ export function mergeOrder(order: string[], sectionIds: string[]): string[] {
 export class TodayPanel {
   private tasks: TaskRow[] = [];
   private opts: TodayOptions = { groupProp: '', groupOptions: [], relTitles: new Map() };
-  private prefs: TodayPrefs = { order: [], doing: [] };
+  private prefs: TodayPrefs = { order: [], doing: [], time: {} };
+  private ticker: ReturnType<typeof setInterval> | undefined;
   private active = '';
   private collapsed = false;
   private loaded = false;
@@ -77,8 +141,12 @@ export class TodayPanel {
     private readonly el: HTMLElement,
     private readonly onToggle: (task: TaskRow) => void,
     private readonly store: { get: (k: string) => string; set: (k: string, v: string) => void },
-    private readonly onPrefs: (prefs: TodayPrefs) => void = () => {}
+    private readonly onPrefs: (prefs: TodayPrefs) => void = () => {},
+    /** Se pausó o terminó una tarea: tiempo total acumulado (para guardarlo en Notion si hay columna) */
+    private readonly onTimeStop: (taskId: string, totalMs: number) => void = () => {}
   ) {
+    // El reloj de las tareas en curso se actualiza solo (sin re-dibujar: no corta un arrastre)
+    this.ticker = setInterval(() => this.tick(), 30000);
     this.active = store.get('group');
     this.collapsed = store.get('collapsed') === '1';
     this.open = { overdue: store.get('overdueOpen') === '1', future: store.get('futureOpen') === '1' };
@@ -131,7 +199,22 @@ export class TodayPanel {
   }
 
   setPrefs(prefs: TodayPrefs): void {
-    this.prefs = { order: [...prefs.order], doing: [...prefs.doing] };
+    this.prefs = {
+      order: [...prefs.order],
+      doing: [...prefs.doing],
+      time: { ...(prefs.time || {}) },
+      log: [...(prefs.log || [])],
+      done: [...(prefs.done || [])]
+    };
+    // Tareas "en curso" de antes de que existiera el reloj: arranca ahora
+    let fixed = false;
+    for (const id of this.prefs.doing) {
+      if (!this.prefs.time[id]?.s) {
+        this.prefs.time = toggleTimer(this.prefs.time, id, true);
+        fixed = true;
+      }
+    }
+    if (fixed) this.onPrefs(this.prefs);
     this.render();
   }
 
@@ -145,8 +228,25 @@ export class TodayPanel {
     const ids = new Set(tasks.map((t) => t.id));
     const doing = this.prefs.doing.filter((id) => ids.has(id));
     const order = this.prefs.order.filter((id) => ids.has(id));
-    if (doing.length !== this.prefs.doing.length || order.length !== this.prefs.order.length) {
-      this.prefs = { order, doing };
+    // Los tiempos de tareas terminadas se guardan un tiempo (historial) y después se limpian
+    const now = Date.now();
+    // Las que se terminaron/borraron en Notion mientras corrían: se cierra su tramo
+    for (const id of this.prefs.doing) if (!ids.has(id)) this.stop(id, now);
+    // Título y selects al día, para el gráfico (aunque la tarea desaparezca después)
+    for (const t of tasks) if (this.prefs.time[t.id]) this.prefs.time[t.id] = { ...this.prefs.time[t.id]!, n: t.title, g: t.selects };
+    const time = Object.fromEntries(
+      Object.entries(this.prefs.time).filter(([id, v]) => ids.has(id) || now - v.u < PRUNE_AFTER)
+    );
+    const log = pruneLog(this.prefs.log, now);
+    const done = pruneLog(this.prefs.done, now);
+    if (
+      doing.length !== this.prefs.doing.length ||
+      order.length !== this.prefs.order.length ||
+      Object.keys(time).length !== Object.keys(this.prefs.time).length ||
+      log.length !== (this.prefs.log || []).length ||
+      done.length !== (this.prefs.done || []).length
+    ) {
+      this.prefs = { order, doing, time, log, done };
       this.onPrefs(this.prefs);
     }
     this.render();
@@ -155,11 +255,14 @@ export class TodayPanel {
   /** Quita una tarea marcada como hecha (o la devuelve si falló) */
   settle(id: string, done: boolean): void {
     if (done) {
+      const task = this.tasks.find((t) => t.id === id) || null;
       this.tasks = this.tasks.filter((t) => t.id !== id);
-      if (this.prefs.doing.includes(id)) {
-        this.prefs = { ...this.prefs, doing: this.prefs.doing.filter((x) => x !== id) };
-        this.onPrefs(this.prefs);
-      }
+      const wasDoing = this.prefs.doing.includes(id);
+      if (wasDoing) this.stop(id);
+      this.prefs = { ...this.prefs, done: [...(this.prefs.done || []), { i: id, d: Date.now(), ...(task ? { g: task.selects } : {}) }] };
+      if (task && this.prefs.time[id]) this.prefs.time[id] = { ...this.prefs.time[id]!, n: task.title, g: task.selects };
+      this.onPrefs(this.prefs);
+      if (wasDoing) this.onTimeStop(id, elapsed(this.prefs.time[id]));
     }
     this.leaving.delete(id);
     this.render();
@@ -174,11 +277,49 @@ export class TodayPanel {
     return this.prefs.doing.includes(id);
   }
 
+  /** Tiempo dedicado a una tarea (ms), contando el tramo en curso */
+  timeSpent(id: string): number {
+    return elapsed(this.prefs.time[id]);
+  }
+
   private toggleDoing(id: string): void {
     const on = !this.prefs.doing.includes(id);
-    this.prefs = { ...this.prefs, doing: on ? [...this.prefs.doing, id] : this.prefs.doing.filter((x) => x !== id) };
+    if (on) {
+      const task = this.tasks.find((t) => t.id === id);
+      const time = toggleTimer(this.prefs.time, id, true);
+      if (task) time[id] = { ...time[id]!, n: task.title, g: task.selects };
+      this.prefs = { ...this.prefs, doing: [...this.prefs.doing, id], time };
+    } else {
+      this.stop(id);
+    }
     this.onPrefs(this.prefs);
+    if (!on) this.onTimeStop(id, elapsed(this.prefs.time[id]));
     this.render();
+  }
+
+  /** Pausa el reloj: cierra el tramo en el historial y saca la tarea de "En curso" */
+  private stop(id: string, now = Date.now()): void {
+    const seg = closingSegment(this.prefs.time, id, now);
+    this.prefs = {
+      ...this.prefs,
+      doing: this.prefs.doing.filter((x) => x !== id),
+      time: toggleTimer(this.prefs.time, id, false, now),
+      log: seg ? [...(this.prefs.log || []), seg] : this.prefs.log
+    };
+  }
+
+  /** Historial para la pestaña Rendimiento (incluye los tramos que siguen corriendo) */
+  history(now = Date.now()): { log: TimeSegment[]; done: DoneEntry[]; time: Record<string, TaskTime> } {
+    const running = this.prefs.doing
+      .map((id) => ({ i: id, a: this.prefs.time[id]?.s ?? now, b: now }))
+      .filter((s) => s.b > s.a);
+    return { log: [...(this.prefs.log || []), ...running], done: this.prefs.done || [], time: this.prefs.time };
+  }
+
+  private tick(): void {
+    for (const chip of this.el.querySelectorAll<HTMLElement>('[data-timer]')) {
+      chip.textContent = `⏱ ${formatDuration(this.timeSpent(chip.dataset.timer!))}`;
+    }
   }
 
   /* ───────────── Arrastrar para ordenar ───────────── */
@@ -261,6 +402,10 @@ export class TodayPanel {
       const chips = [
         showDay ? `<span class="today-chip ${late ? 'late' : ''}">${dd}</span>` : '',
         date?.time ? `<span class="today-chip">${date.time}</span>` : '',
+        // Reloj: corriendo (en curso) o total acumulado
+        this.timeSpent(t.id) >= 60000 || doingSet.has(t.id)
+          ? `<span class="today-chip timer ${doingSet.has(t.id) ? 'running' : ''}" data-timer="${t.id}">⏱ ${formatDuration(this.timeSpent(t.id))}</span>`
+          : '',
         ...Object.entries(t.selects)
           .filter(([p]) => p !== this.opts.groupProp)
           .flatMap(([, v]) => v)
