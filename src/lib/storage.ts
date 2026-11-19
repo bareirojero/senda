@@ -18,6 +18,9 @@ export const KEYS = {
   todayCollapsed: 'senda_today_collapsed',
   todayOverdueOpen: 'senda_today_overdue_open',
   todayFutureOpen: 'senda_today_future_open',
+  todayOrder: 'senda_today_order',
+  todayDoing: 'senda_today_doing',
+  settingsDirty: 'senda_settings_dirty',
   sessionCache: 'senda_session_cache'
 } as const;
 

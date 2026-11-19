@@ -1117,6 +1117,64 @@ canvas#neural-canvas:active { cursor: grabbing; }
 .today-chip.late { color: var(--pastel-rose-fg); background: var(--pastel-rose-bg); }
 .today-empty { font-size: 12.5px; color: var(--text-muted); padding: 6px 0 2px; }
 
+/* Ordenar arrastrando (asa ⋮⋮) */
+.today-task { position: relative; }
+.today-drag {
+  width: 14px;
+  flex-shrink: 0;
+  margin: 2px -6px 0 -10px;
+  color: var(--text-light);
+  cursor: grab;
+  opacity: 0;
+  touch-action: none;
+  display: flex;
+  transition: opacity 0.15s;
+}
+.today-drag svg { width: 14px; height: 18px; fill: currentColor; }
+.today-task:hover .today-drag { opacity: 1; }
+@media (hover: none) { .today-drag { opacity: 0.55; } }
+.today-task.dragging {
+  background: var(--bg-subtle);
+  border-radius: 8px;
+  box-shadow: var(--shadow-soft);
+  z-index: 2;
+}
+.today-task.dragging .today-drag { cursor: grabbing; opacity: 1; }
+body.is-dragging { user-select: none; cursor: grabbing; }
+
+/* En curso (registro de Senda) */
+.today-task-body { flex: 1; }
+.today-doing-btn {
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  border: none;
+  border-radius: 50%;
+  background: none;
+  color: var(--text-light);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.15s, background 0.15s, color 0.15s;
+}
+.today-doing-btn svg { width: 13px; height: 13px; fill: currentColor; }
+.today-task:hover .today-doing-btn, .today-doing-btn.on { opacity: 1; }
+@media (hover: none) { .today-doing-btn { opacity: 0.6; } }
+.today-doing-btn:hover { background: var(--bg-subtle); color: var(--accent-main); }
+.today-doing-btn.on { color: var(--accent-main); background: var(--pastel-blue-bg); }
+.today-task.doing .today-title { font-weight: 600; }
+.today-label.doing { color: var(--accent-main); }
+.today-doing-count {
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+  background: var(--accent-main);
+  border-radius: 10px;
+  padding: 0 7px;
+}
+
 .composer-brand { display: none; }
 
 /* Dictado por voz */

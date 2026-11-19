@@ -91,3 +91,22 @@ describe('sincronización con "Senda · Bandeja"', () => {
     expect(states).toContain('access_key');
   });
 });
+
+describe('ajustes compartidos', () => {
+  it('lo que guardaste aquí y aún no se subió no lo pisa la versión vieja de Notion', async () => {
+    localStorage.setItem('senda_today_group_prop', 'Ámbito');
+    sync.markSettingsDirty();
+    expect(sync.applySettings({ senda_today_group_prop: '__none__' })).toBe(false);
+    expect(localStorage.getItem('senda_today_group_prop')).toBe('Ámbito');
+  });
+
+  it('después de subir, vuelve a aceptar lo que llega de otros dispositivos', async () => {
+    mockServer([]);
+    await sync.pull([]); // habilita la sincronización
+    localStorage.setItem('senda_today_group_prop', 'Ámbito');
+    sync.markSettingsDirty();
+    expect(await sync.pushSettings()).toBe(true);
+    expect(sync.applySettings({ senda_today_group_prop: 'Categoría' })).toBe(true);
+    expect(localStorage.getItem('senda_today_group_prop')).toBe('Categoría');
+  });
+});
