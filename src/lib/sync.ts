@@ -149,7 +149,7 @@ async function push(getNotes: () => Note[]): Promise<void> {
 }
 
 /** Ajustes compartidos entre dispositivos */
-const SHARED_SETTINGS = [KEYS.tasksDb, KEYS.aiFill, KEYS.notionPage, KEYS.todayGroupProp, KEYS.todayOrder, KEYS.todayDoing] as const;
+const SHARED_SETTINGS = [KEYS.tasksDb, KEYS.aiFill, KEYS.notionPage, KEYS.todayGroupProp, KEYS.todayOrder, KEYS.todayDoing, KEYS.todayTime, KEYS.todayLog, KEYS.todayDone] as const;
 
 /**
  * Cambios locales de ajustes aún sin subir: mientras existan, lo que llega de Notion

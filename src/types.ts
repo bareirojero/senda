@@ -55,7 +55,7 @@ export interface TopicMeta {
   databaseId?: string;
 }
 
-export type View = 'stream' | 'graph' | 'config' | 'topic';
+export type View = 'stream' | 'graph' | 'stats' | 'config' | 'topic';
 
 export interface SlashItem {
   id: string;

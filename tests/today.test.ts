@@ -93,9 +93,54 @@ describe('En curso', () => {
     const el = document.createElement('div');
     const saved: { doing: string[] }[] = [];
     const p = new TodayPanel(el, () => {}, { get: () => '', set: () => {} }, (prefs) => saved.push(prefs));
-    p.setPrefs({ order: [], doing: ['2'] });
+    p.setPrefs({ order: [], doing: ['2'], time: {} });
     p.setData([task('2', 'De hoy', day(0), 'Trabajo')], { groupProp: 'Ámbito', groupOptions: [], relTitles: new Map() });
     p.settle('2', true);
     expect(saved.at(-1)!.doing).toEqual([]);
+  });
+
+  it('al completarla queda registrada con su ámbito, para Rendimiento', () => {
+    const el = document.createElement('div');
+    const p = new TodayPanel(el, () => {}, { get: () => '', set: () => {} }, () => {});
+    p.setData([task('7', 'Planilla', day(0), 'Personal')], { groupProp: 'Ámbito', groupOptions: [], relTitles: new Map() });
+    p.settle('7', true);
+    expect(p.history().done.at(-1)).toMatchObject({ i: '7', g: { 'Ámbito': ['Personal'] } });
+  });
+});
+
+import { elapsed, formatDuration, toggleTimer } from '../src/ui/today';
+
+describe('tiempo en curso', () => {
+  const H = 3600000;
+  it('suma los tramos: poner, sacar y volver a poner En curso', () => {
+    let time = toggleTimer({}, 'a', true, 0); // ▶ 0:00
+    time = toggleTimer(time, 'a', false, 30 * 60000); // ⏸ a los 30 min
+    time = toggleTimer(time, 'a', true, H); // ▶ otra vez a la hora
+    expect(elapsed(time.a, H + 15 * 60000)).toBe(45 * 60000); // corriendo: 30 + 15
+    time = toggleTimer(time, 'a', false, 2 * H); // ⏸
+    expect(elapsed(time.a, 5 * H)).toBe(90 * 60000); // pausado: no sigue sumando
+  });
+
+  it('formato legible', () => {
+    expect(formatDuration(42 * 60000)).toBe('42 min');
+    expect(formatDuration(65 * 60000)).toBe('1 h 05');
+    expect(formatDuration(12.5 * H)).toBe('12 h 30');
+  });
+
+  it('el panel muestra el reloj, avisa al pausar y al terminar con el total', () => {
+    const el = document.createElement('div');
+    const stops: [string, number][] = [];
+    const p = new TodayPanel(el, () => {}, { get: () => '', set: () => {} }, () => {}, (id, ms) => stops.push([id, ms]));
+    p.setPrefs({ order: [], doing: [], time: { '2': { t: 65 * 60000, u: Date.now() } } });
+    p.setData([task('2', 'De hoy', day(0), 'Trabajo')], { groupProp: 'Ámbito', groupOptions: [], relTitles: new Map() });
+    expect(el.querySelector('[data-timer="2"]')?.textContent).toBe('⏱ 1 h 05');
+    el.querySelector<HTMLButtonElement>('[data-today-doing="2"]')!.click(); // ▶
+    expect(el.querySelector('[data-timer="2"]')?.classList.contains('running')).toBe(true);
+    el.querySelector<HTMLButtonElement>('[data-today-doing="2"]')!.click(); // ⏸
+    expect(stops).toHaveLength(1);
+    expect(stops[0]![1]).toBeGreaterThanOrEqual(65 * 60000);
+    el.querySelector<HTMLButtonElement>('[data-today-doing="2"]')!.click(); // ▶
+    p.settle('2', true); // hecha
+    expect(stops).toHaveLength(2);
   });
 });

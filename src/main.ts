@@ -2,7 +2,8 @@ import './style.css';
 import { state, persistNotes, ensureTopic, syncTopicsFromNotion, findTopic, onPersist } from './state';
 import { applySettings, markSettingsDirty, onSyncState, pull, pushSettings, schedulePush, schedulePushSettings } from './lib/sync';
 import { MentionMenu, type MentionItem } from './ui/mention-menu';
-import { TodayPanel, localDay } from './ui/today';
+import { TodayPanel, localDay, formatDuration, type TaskTime } from './ui/today';
+import { StatsPanel } from './ui/stats';
 import { VoiceInput } from './ui/voice';
 import { slugify } from './data/seed';
 import { extractRow, norm, schemaForAi, tagFor, toNotionDate, type AiExtraction } from './lib/extract';
@@ -28,6 +29,7 @@ const el = {
   graphCanvas: $<HTMLCanvasElement>('neural-canvas'),
   graphCard: $('graph-card'),
   configView: $('config-view'),
+  statsView: $('stats-view'),
   banner: $('topic-banner'),
   bannerText: $('topic-banner-text'),
   sidebar: $('right-sidebar'),
@@ -71,15 +73,42 @@ const today = new TodayPanel(
     get: (k) => getItem(TODAY_KEYS[k as keyof typeof TODAY_KEYS]),
     set: (k, v) => setItem(TODAY_KEYS[k as keyof typeof TODAY_KEYS], v)
   },
-  // Orden manual y "En curso": solo de Senda, compartidos entre dispositivos
+  // Orden manual, "En curso" y tiempos: solo de Senda, compartidos entre dispositivos
   (prefs) => {
     setJSON(KEYS.todayOrder, prefs.order);
     setJSON(KEYS.todayDoing, prefs.doing);
+    setJSON(KEYS.todayTime, prefs.time);
+    setJSON(KEYS.todayLog, prefs.log || []);
+    setJSON(KEYS.todayDone, prefs.done || []);
     schedulePushSettings();
-  }
+    if (state.activeView === 'stats') stats.render();
+  },
+  (taskId, ms) => void saveTimeToNotion(taskId, ms)
 );
+/** Rendimiento: lee el historial de Hoy y agrupa por los selects de la base de tareas */
+const stats = new StatsPanel($('stats-view'), () => {
+  const db = tasksDatabase();
+  const props = (db?.properties || [])
+    .filter((p) => (p.type === 'select' || p.type === 'multi_select' || p.type === 'status') && p.options?.length)
+    .map((p) => ({ name: p.name, options: p.options! }));
+  return { history: today.history(), props, defaultProp: db ? todayGroupProp(db) : '' };
+});
 function loadTodayPrefs(): void {
-  today.setPrefs({ order: getJSON<string[]>(KEYS.todayOrder, []), doing: getJSON<string[]>(KEYS.todayDoing, []) });
+  today.setPrefs({
+    order: getJSON<string[]>(KEYS.todayOrder, []),
+    doing: getJSON<string[]>(KEYS.todayDoing, []),
+    time: getJSON<Record<string, TaskTime>>(KEYS.todayTime, {}),
+    log: getJSON(KEYS.todayLog, []),
+    done: getJSON(KEYS.todayDone, [])
+  });
+  if (state.activeView === 'stats') stats.render();
+}
+
+/** Si la base de tareas tiene una columna de número tipo "Tiempo (h)", se guardan ahí las horas. */
+async function saveTimeToNotion(taskId: string, ms: number): Promise<void> {
+  const prop = tasksDatabase()?.properties.find((p) => p.type === 'number' && /tiempo|horas|duraci|hours|time/i.test(p.name));
+  if (!prop || !session || offline) return;
+  await updateInNotion(taskId, { properties: { [prop.name]: { number: Math.round((ms / 3600000) * 100) / 100 } } });
 }
 loadTodayPrefs();
 let todayDoneProp: string | null = null;
@@ -144,7 +173,8 @@ function tasksForAi(): string {
       const day = t.date ? localDay(new Date(t.date.length <= 10 ? `${t.date}T12:00:00` : t.date)) : '';
       const extra = Object.entries(t.selects).map(([k, v]) => `${k}: ${v.join('/')}`);
       const rel = Object.values(t.relations).flat().map((id) => targets.find((x) => x.id === id)?.title).filter(Boolean);
-      return `- ${today.isDoing(t.id) ? '[EN CURSO] ' : ''}${t.title}${t.date ? ` · fecha ${t.date.slice(0, 16).replace('T', ' ')}${day < now ? ' (vencida)' : ''}` : ' · sin fecha'}${extra.length ? ` · ${extra.join(' · ')}` : ''}${rel.length ? ` · Obra: ${rel.join(', ')}` : ''}`;
+      const spent = today.timeSpent(t.id);
+      return `- ${today.isDoing(t.id) ? '[EN CURSO] ' : ''}${t.title}${spent >= 60000 ? ` · tiempo dedicado: ${formatDuration(spent)}` : ''}${t.date ? ` · fecha ${t.date.slice(0, 16).replace('T', ' ')}${day < now ? ' (vencida)' : ''}` : ' · sin fecha'}${extra.length ? ` · ${extra.join(' · ')}` : ''}${rel.length ? ` · Obra: ${rel.join(', ')}` : ''}`;
     })
     .join('\n');
 }
@@ -222,11 +252,15 @@ function setView(view: View): void {
   if (view === 'stream') $('nav-stream').classList.add('active');
   if (view === 'graph') $('nav-graph').classList.add('active');
   if (view === 'config') $('nav-config').classList.add('active');
+  if (view === 'stats') $('nav-stats').classList.add('active');
 
   el.mainColumn.classList.toggle('hidden', view !== 'stream');
   el.graphView.classList.toggle('active', view === 'graph');
   el.configView.classList.toggle('active', view === 'config');
+  el.statsView.classList.toggle('active', view === 'stats');
   el.banner.classList.remove('visible');
+  if (view === 'stats') stats.show();
+  else stats.hide();
 
   if (view === 'graph') initGraph(el.graphCanvas, el.graphCard);
   else stopGraph();
@@ -243,6 +277,8 @@ function selectTopic(key: string): void {
   el.mainColumn.classList.remove('hidden');
   el.graphView.classList.remove('active');
   el.configView.classList.remove('active');
+  el.statsView.classList.remove('active');
+  stats.hide();
   el.banner.classList.add('visible');
   el.bannerText.textContent = `${meta.label} — ${meta.notionDest}`;
   render();
