@@ -1688,3 +1688,37 @@ aside.right-sidebar.collapsed .topics-list.collapsed { display: block; }
 @media (max-width: 720px) {
   .stats-container { padding: 18px 14px 40px; }
 }
+
+/* Corregir el tiempo de una tarea (tocando el chip ⏱) */
+.today-chip.timer { cursor: pointer; }
+.today-chip.timer:hover { filter: brightness(0.96); text-decoration: underline dotted; }
+.today-task.editing { flex-wrap: wrap; }
+.today-time-edit {
+  flex: 1 0 100%;
+  margin: 8px 0 4px 30px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.today-time-field label { display: block; font-size: 12px; color: var(--text-main); margin-bottom: 4px; }
+.today-time-field label span { color: var(--text-muted); margin-left: 4px; }
+.today-time-row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.today-time-row input {
+  font: inherit; font-size: 13px; color: var(--text-main); background: var(--bg-card);
+  border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px; min-width: 0;
+  color-scheme: light dark;
+}
+.today-time-row input[name="total"] { width: 80px; font-variant-numeric: tabular-nums; }
+.today-time-btn {
+  font: inherit; font-size: 12px; border-radius: 8px; padding: 6px 10px; cursor: pointer;
+  border: 1px solid var(--border); background: var(--bg-card); color: var(--text-main);
+}
+.today-time-btn.primary { background: var(--accent-main); border-color: var(--accent-main); color: #fff; }
+.today-time-btn.ghost { border-color: transparent; background: transparent; color: var(--text-muted); }
+.today-time-error { font-size: 12px; color: var(--pastel-rose-fg); }
+.today-time-error:empty { display: none; }
+@media (max-width: 720px) { .today-time-edit { margin-left: 0; } }
