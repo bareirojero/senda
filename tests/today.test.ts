@@ -144,3 +144,55 @@ describe('tiempo en curso', () => {
     expect(stops).toHaveLength(2);
   });
 });
+
+import { parseDuration, setTotal } from '../src/ui/today';
+
+describe('corregir el tiempo', () => {
+  const H = 3600000;
+  it('entiende varias formas de escribir una duración', () => {
+    expect(parseDuration('2:30')).toBe(2.5 * H);
+    expect(parseDuration('2 h 30')).toBe(2.5 * H);
+    expect(parseDuration('2,5')).toBe(2.5 * H);
+    expect(parseDuration('3 h')).toBe(3 * H);
+    expect(parseDuration('45 min')).toBe(45 * 60000);
+    expect(parseDuration('hola')).toBeNull();
+  });
+
+  it('bajar el total recorta los tramos más recientes del historial', () => {
+    const prefs = {
+      order: [], doing: [], time: { a: { t: 5 * H, u: 0 } },
+      log: [
+        { i: 'a', a: 0, b: 2 * H },
+        { i: 'b', a: 0, b: H },
+        { i: 'a', a: 10 * H, b: 13 * H }
+      ]
+    };
+    const next = setTotal(prefs, 'a', 3 * H, 20 * H);
+    expect(next.time.a!.t).toBe(3 * H);
+    expect(next.log).toEqual([
+      { i: 'a', a: 0, b: 2 * H },
+      { i: 'b', a: 0, b: H },
+      { i: 'a', a: 10 * H, b: 11 * H }
+    ]);
+  });
+
+  it('se olvidó de pausar: "Pausar ahí" cierra el tramo a esa hora', () => {
+    const el = document.createElement('div');
+    const saved: { doing: string[]; log?: { a: number; b: number }[] }[] = [];
+    const stops: number[] = [];
+    const p = new TodayPanel(el, () => {}, { get: () => '', set: () => {} }, (prefs) => saved.push(prefs), (_, ms) => stops.push(ms));
+    const start = Date.now() - 72 * H;
+    p.setPrefs({ order: [], doing: ['2'], time: { '2': { t: 0, s: start, u: start } } });
+    p.setData([task('2', 'Resumen de lluvias', day(0), 'Trabajo')], { groupProp: 'Ámbito', groupOptions: [], relTitles: new Map() });
+    el.querySelector<HTMLElement>('[data-timer="2"]')!.click();
+    const input = el.querySelector<HTMLInputElement>('[name=stop-at]')!;
+    const at = new Date(start + 2 * H);
+    const pad = (n: number) => String(n).padStart(2, '0');
+    input.value = `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}T${pad(at.getHours())}:${pad(at.getMinutes())}`;
+    el.querySelector<HTMLElement>('[data-time-action=stop-at]')!.click();
+    const last = saved.at(-1)!;
+    expect(last.doing).toEqual([]);
+    expect(Math.abs(stops.at(-1)! - 2 * H)).toBeLessThan(60000);
+    expect(el.querySelector('.today-time-edit')).toBeNull();
+  });
+});

@@ -71,6 +71,56 @@ export function closingSegment(time: Record<string, TaskTime>, id: string, now =
   return s !== undefined && now - s >= 1000 ? { i: id, a: s, b: now } : null;
 }
 
+/** "2:30", "2 h 30", "2,5", "2.5 h", "45 min", "90m" → ms (null si no se entiende) */
+export function parseDuration(text: string): number | null {
+  const v = text.trim().toLowerCase().replace(',', '.');
+  if (!v) return null;
+  let m = v.match(/^(\d+)\s*(?::|h)\s*(\d{1,2})?\s*(?:m|min)?$/);
+  if (m) return Number(m[1]) * 3_600_000 + Number(m[2] || 0) * 60_000;
+  m = v.match(/^(\d+)\s*(?:m|min|mins|minutos?)$/);
+  if (m) return Number(m[1]) * 60_000;
+  m = v.match(/^(\d+(?:\.\d+)?)\s*(?:h|hs|horas?)?$/);
+  if (m) return Math.round(Number(m[1]) * 3_600_000);
+  return null;
+}
+
+/** "2:05" para el campo de edición */
+export function durationInput(ms: number): string {
+  const min = Math.round(ms / 60_000);
+  return `${Math.floor(min / 60)}:${String(min % 60).padStart(2, '0')}`;
+}
+
+/**
+ * Corrige el total de una tarea a `ms`. Si el historial tiene más tiempo, se recortan
+ * los tramos más recientes para que los gráficos coincidan. Si está corriendo, sigue
+ * corriendo desde ahora con el total nuevo.
+ */
+export function setTotal(prefs: TodayPrefs, id: string, ms: number, now = Date.now()): TodayPrefs {
+  const cur = prefs.time[id] || { t: 0, u: now };
+  const running = cur.s !== undefined;
+  const log = [...(prefs.log || [])];
+  let logged = log.filter((x) => x.i === id).reduce((a, x) => a + (x.b - x.a), 0);
+  for (let k = log.length - 1; k >= 0 && logged > ms; k--) {
+    const seg = log[k]!;
+    if (seg.i !== id) continue;
+    const cut = Math.min(logged - ms, seg.b - seg.a);
+    logged -= cut;
+    if (cut >= seg.b - seg.a) log.splice(k, 1);
+    else log[k] = { ...seg, b: seg.b - cut };
+  }
+  const next: TaskTime = { ...cur, t: Math.max(0, ms), u: now };
+  if (running) next.s = now;
+  else delete next.s;
+  return { ...prefs, time: { ...prefs.time, [id]: next }, log };
+}
+
+/** Valor para <input type="datetime-local"> en hora local */
+export function localDateTime(t: number): string {
+  const d = new Date(t);
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
 /** Recorta el historial a los últimos 60 días */
 export function pruneLog<T extends { a?: number; d?: number }>(list: T[] = [], now = Date.now()): T[] {
   return list.filter((x) => now - (x.d ?? x.a ?? 0) < LOG_DAYS);
@@ -136,6 +186,8 @@ export class TodayPanel {
   /** Grupos desplegables: vencidas y a futuro (cerrados por defecto) */
   private open: Record<'overdue' | 'future', boolean> = { overdue: false, future: false };
   private dragging = false;
+  /** Tarea cuyo tiempo se está corrigiendo (se abre tocando el chip ⏱) */
+  private editing: string | null = null;
 
   constructor(
     private readonly el: HTMLElement,
@@ -173,6 +225,13 @@ export class TodayPanel {
         this.store.set('collapsed', this.collapsed ? '1' : '');
         return this.render();
       }
+      const timer = t.closest<HTMLElement>('[data-timer]');
+      if (timer) {
+        this.editing = this.editing === timer.dataset.timer ? null : timer.dataset.timer!;
+        return this.render();
+      }
+      const action = t.closest<HTMLElement>('[data-time-action]');
+      if (action) return this.timeAction(action.dataset.timeAction!);
       const doing = t.closest<HTMLElement>('[data-today-doing]');
       if (doing) return this.toggleDoing(doing.dataset.todayDoing!);
       const check = t.closest<HTMLElement>('[data-today-task]');
@@ -297,6 +356,39 @@ export class TodayPanel {
     this.render();
   }
 
+  /** Botones del editor de tiempo: pausar a una hora pasada, guardar total o cancelar */
+  private timeAction(kind: string): void {
+    const id = this.editing;
+    if (!id) return;
+    const box = this.el.querySelector<HTMLElement>('.today-time-edit');
+    const err = (msg: string) => {
+      const e = box?.querySelector<HTMLElement>('.today-time-error');
+      if (e) e.textContent = msg;
+    };
+    if (kind === 'cancel') {
+      this.editing = null;
+      return this.render();
+    }
+    const now = Date.now();
+    if (kind === 'stop-at') {
+      const raw = box?.querySelector<HTMLInputElement>('[name=stop-at]')?.value || '';
+      const at = new Date(raw).getTime();
+      const s = this.prefs.time[id]?.s;
+      if (s === undefined) return;
+      if (!raw || Number.isNaN(at)) return err('Elegí día y hora.');
+      if (at < s) return err('Es antes de que la pusieras en curso.');
+      this.stop(id, Math.min(at, now));
+    } else if (kind === 'save-total') {
+      const ms = parseDuration(box?.querySelector<HTMLInputElement>('[name=total]')?.value || '');
+      if (ms === null) return err('Escribilo como 2:30, 2,5 h o 45 min.');
+      this.prefs = setTotal(this.prefs, id, ms, now);
+    }
+    this.editing = null;
+    this.onPrefs(this.prefs);
+    this.onTimeStop(id, elapsed(this.prefs.time[id]));
+    this.render();
+  }
+
   /** Pausa el reloj: cierra el tramo en el historial y saca la tarea de "En curso" */
   private stop(id: string, now = Date.now()): void {
     const seg = closingSegment(this.prefs.time, id, now);
@@ -306,6 +398,39 @@ export class TodayPanel {
       time: toggleTimer(this.prefs.time, id, false, now),
       log: seg ? [...(this.prefs.log || []), seg] : this.prefs.log
     };
+  }
+
+  private timeEditor(id: string): string {
+    const s = this.prefs.time[id]?.s;
+    const now = Date.now();
+    const since = s !== undefined
+      ? (() => {
+          const d = new Date(s);
+          const wd = ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb'][d.getDay()];
+          return `${wd} ${d.getDate()}/${d.getMonth() + 1} ${localDateTime(s).slice(11)}`;
+        })()
+      : '';
+    const stopAt = s !== undefined
+      ? `<div class="today-time-field">
+           <label>¿Cuándo la dejaste? <span>En curso desde ${escapeHtml(since)}</span></label>
+           <div class="today-time-row">
+             <input type="datetime-local" name="stop-at" value="${localDateTime(now)}" min="${localDateTime(s)}" max="${localDateTime(now)}">
+             <button class="today-time-btn primary" data-time-action="stop-at">Pausar ahí</button>
+           </div>
+         </div>`
+      : '';
+    return `<div class="today-time-edit">
+        ${stopAt}
+        <div class="today-time-field">
+          <label>Tiempo total</label>
+          <div class="today-time-row">
+            <input type="text" name="total" inputmode="decimal" value="${durationInput(this.timeSpent(id))}" placeholder="2:30">
+            <button class="today-time-btn" data-time-action="save-total">Guardar</button>
+            <button class="today-time-btn ghost" data-time-action="cancel">Cancelar</button>
+          </div>
+        </div>
+        <div class="today-time-error" role="alert"></div>
+      </div>`;
   }
 
   /** Historial para la pestaña Rendimiento (incluye los tramos que siguen corriendo) */
@@ -418,7 +543,8 @@ export class TodayPanel {
       ].join('');
       const leaving = this.leaving.has(t.id);
       const isDoing = doingSet.has(t.id);
-      return `<div class="today-task ${leaving ? 'leaving' : ''} ${isDoing ? 'doing' : ''}" data-id="${t.id}" data-section="${section}">
+      const editing = this.editing === t.id;
+      return `<div class="today-task ${leaving ? 'leaving' : ''} ${isDoing ? 'doing' : ''} ${editing ? 'editing' : ''}" data-id="${t.id}" data-section="${section}">
           <span class="today-drag" data-drag title="Arrastrar para ordenar" aria-label="Ordenar">
             <svg viewBox="0 0 24 24"><circle cx="9" cy="6" r="1.4"/><circle cx="15" cy="6" r="1.4"/><circle cx="9" cy="12" r="1.4"/><circle cx="15" cy="12" r="1.4"/><circle cx="9" cy="18" r="1.4"/><circle cx="15" cy="18" r="1.4"/></svg>
           </span>
@@ -433,6 +559,7 @@ export class TodayPanel {
               ? '<svg viewBox="0 0 24 24"><rect x="7" y="6" width="3.5" height="12" rx="1"/><rect x="13.5" y="6" width="3.5" height="12" rx="1"/></svg>'
               : '<svg viewBox="0 0 24 24"><path d="M8 5.5v13l10.5-6.5z"/></svg>'}
           </button>
+          ${editing ? this.timeEditor(t.id) : ''}
         </div>`;
     };
 
@@ -453,11 +580,17 @@ export class TodayPanel {
       : `<div class="today-empty">${this.active ? `Nada en ${escapeHtml(this.active)} para hoy` : 'Nada pendiente para hoy'} ✓</div>`;
     const body = `${doingBlock}${section('overdue', 'Vencidas', overdue)}${todayBlock}${section('future', 'A futuro', future)}`;
 
+    // Si se refresca mientras se corrige un tiempo, no perder lo escrito
+    const kept = [...this.el.querySelectorAll<HTMLInputElement>('.today-time-edit input')].map((i) => [i.name, i.value] as const);
     this.el.innerHTML = `
       <button class="today-header" data-today-toggle aria-expanded="${!this.collapsed}">
         <span class="today-heading">Hoy <span class="today-count">${todays.length}</span>${doing.length ? `<span class="today-doing-count">▶ ${doing.length}</span>` : ''}</span>
         <svg class="nav-svg side-chevron" viewBox="0 0 24 24"><polyline points="9 6 15 12 9 18"></polyline></svg>
       </button>
       ${this.collapsed ? '' : `${buttons}<div class="today-list">${body}</div>`}`;
+    for (const [name, value] of kept) {
+      const input = this.el.querySelector<HTMLInputElement>(`.today-time-edit input[name="${name}"]`);
+      if (input) input.value = value;
+    }
   }
 }
